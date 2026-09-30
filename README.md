@@ -142,6 +142,10 @@ curl -X POST -H "Authorization: Bearer <token>" localhost:3000/api/run-analysis
 - `MAX_SIGNALS_PER_GROUP`, `MAX_SIGNALS_PER_CATEGORY` — диверсификация каталога.
 - `ANALYSIS_CRON`, `PRICE_REFRESH_CRON` — расписание воркера (UTC).
 - `YANDEX_VERIFICATION`, `GOOGLE_SITE_VERIFICATION` — мета-верификация поисковиков.
+- `YANDEX_METRIKA_ID` — счётчик Яндекс.Метрики; сниппет рендерится первым элементом `<body>`
+  на всех страницах (пустое значение — счётчик отключается). На 404-страницах Next не
+  рендерит тело layout в HTML, поэтому компонент дополнительно инициализирует счётчик
+  на клиенте (guard по `window.ym` исключает двойной вызов на обычных страницах).
 
 ### Как строится сигнал
 

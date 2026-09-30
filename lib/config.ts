@@ -116,7 +116,9 @@ export const config = {
 
   // --- SEO ---
   yandexVerification: process.env.YANDEX_VERIFICATION ?? '',
-  googleSiteVerification: process.env.GOOGLE_SITE_VERIFICATION ?? ''
+  googleSiteVerification: process.env.GOOGLE_SITE_VERIFICATION ?? '',
+  /** Yandex.Metrika counter id (empty string disables the snippet). */
+  yandexMetrikaId: process.env.YANDEX_METRIKA_ID ?? '113221293'
 } as const;
 
 export type SiteConfig = typeof config;
