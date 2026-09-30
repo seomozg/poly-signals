@@ -94,10 +94,16 @@ async function catchUpIfNeeded(): Promise<void> {
   }
   const ageHours = (Date.now() - new Date(last).getTime()) / 3_600_000;
   if (ageHours > config.analysisMaxAgeHours) {
-    console.log('[worker] last daily run was %.1f hours ago — catching up', ageHours);
+    console.log(
+      '[worker] last daily run was %s hours ago — catching up',
+      ageHours.toFixed(1)
+    );
     await dailyNow('catch-up');
   } else {
-    console.log('[worker] last daily run %.1f hours ago — nothing to catch up', ageHours);
+    console.log(
+      '[worker] last daily run %s hours ago — nothing to catch up',
+      ageHours.toFixed(1)
+    );
   }
 }
 

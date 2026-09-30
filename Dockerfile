@@ -2,6 +2,11 @@
 FROM node:24-slim AS deps
 WORKDIR /app
 ENV npm_config_fund=false npm_config_audit=false
+# better-sqlite3 falls back to node-gyp compilation when a prebuilt binary
+# for this Node/platform is unavailable — ship the toolchain for that case.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends python3 make g++ \
+    && rm -rf /var/lib/apt/lists/*
 COPY package.json package-lock.json ./
 RUN npm ci
 
@@ -10,6 +15,10 @@ FROM node:24-slim AS build
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
+# SITE_URL is baked into prerendered metadata/canonical/sitemap — pass it as a
+# build arg so production pages never reference localhost.
+ARG SITE_URL=http://localhost:3000
+ENV SITE_URL=$SITE_URL
 ENV NEXT_TELEMETRY_DISABLED=1
 RUN npm run build
 

@@ -1,0 +1,11 @@
+node_modules
+.next
+.git
+data
+.env
+*.log
+*.out.txt
+*.err.txt
+vitest.out.txt
+deploy
+README.md

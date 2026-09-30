@@ -1,13 +1,19 @@
 services:
   web:
-    build: .
+    build:
+      context: .
+      args:
+        # Canonical origin baked into prerendered metadata/sitemap
+        SITE_URL: ${SITE_URL:-http://localhost:3000}
     image: poly-site
     command: npx next start -H 0.0.0.0 -p 3000
     env_file: .env
     environment:
       DATABASE_PATH: /app/data/poly_site.db
+      SITE_URL: ${SITE_URL:-http://localhost:3000}
     ports:
-      - "3000:3000"
+      # Bound to loopback; override with WEB_PORT if3000 is taken on the host
+      - "127.0.0.1:${WEB_PORT:-3010}:3000"
     volumes:
       - ./data:/app/data
     restart: unless-stopped
@@ -18,12 +24,16 @@ services:
       retries: 3
 
   worker:
-    build: .
+    build:
+      context: .
+      args:
+        SITE_URL: ${SITE_URL:-http://localhost:3000}
     image: poly-site
     command: npx tsx worker/index.ts
     env_file: .env
     environment:
       DATABASE_PATH: /app/data/poly_site.db
+      SITE_URL: ${SITE_URL:-http://localhost:3000}
     volumes:
       - ./data:/app/data
     restart: unless-stopped

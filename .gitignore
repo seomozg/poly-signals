@@ -42,3 +42,5 @@ yarn-error.log*
 *.err.txt
 .tmp-*.ts
 .tmp-*.mjs
+.tmp-*.cjs
+*.tar.gz

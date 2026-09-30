@@ -3,9 +3,10 @@ import {config} from '@/lib/config';
 import {localeUrl} from '@/lib/seo';
 import {listSignals} from '@/lib/repo';
 
-// Signals are added daily — refresh the sitemap hourly so new pages are
-// discovered by Google/Yandex without a redeploy.
-export const revalidate = 3600;
+// The sitemap must always be rendered from the live database: at image build
+// time there is no data volume mounted, so a prerendered copy would contain
+// zero signal URLs and be served until the revalidate window expires.
+export const dynamic = 'force-dynamic';
 
 /**
  * Sitemap for Google and Yandex: catalog pages for both locales plus every
