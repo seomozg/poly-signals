@@ -109,7 +109,7 @@ export default async function CatalogPage({params, searchParams}: Props) {
       ) : (
         <ul className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {items.map((signal) => (
-            <li key={signal.id}>
+            <li key={signal.id} className="flex">
               <SignalCard signal={signal} locale={locale} labels={labels} />
             </li>
           ))}

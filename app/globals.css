@@ -1,8 +1,12 @@
 @import 'tailwindcss';
 
+/* Dark theme only: `dark:` utilities are driven by the `dark` class on <html>
+   instead of the OS preference, so the whole site is always dark. */
+@custom-variant dark (&:where(.dark, .dark *));
+
 /* ---------- Base ---------- */
 :root {
-  color-scheme: light dark;
+  color-scheme: dark;
 }
 
 html {
@@ -11,7 +15,7 @@ html {
 }
 
 body {
-  @apply bg-white text-zinc-900 antialiased dark:bg-zinc-950 dark:text-zinc-100;
+  @apply bg-zinc-950 text-zinc-100 antialiased;
   font-family:
     ui-sans-serif,
     system-ui,

@@ -58,7 +58,7 @@ export default async function LocaleLayout({children, params}: Props) {
   const t = await getTranslations({locale, namespace: 'Header'});
 
   return (
-    <html lang={locale} suppressHydrationWarning>
+    <html lang={locale} className="dark" suppressHydrationWarning>
       <body>
         <NextIntlClientProvider locale={locale}>
           <SiteHeader

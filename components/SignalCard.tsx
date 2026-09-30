@@ -32,10 +32,10 @@ export default function SignalCard({signal, locale, labels}: Props) {
         : labels.pending;
 
   return (
-    <article className="card flex flex-col overflow-hidden">
+    <article className="card flex h-full flex-col overflow-hidden">
       <Link
         href={`/signal/${signal.slug}`}
-        className="flex items-start gap-4 p-4 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-zinc-900"
+        className="flex flex-1 items-start gap-4 p-4 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-400"
       >
         <div className="relative h-16 w-16 shrink-0 overflow-hidden rounded-lg bg-zinc-100 dark:bg-zinc-800">
           {signal.image ? (
