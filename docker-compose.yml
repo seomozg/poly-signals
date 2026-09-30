@@ -1,0 +1,32 @@
+services:
+  web:
+    build: .
+    image: poly-site
+    command: npx next start -H 0.0.0.0 -p 3000
+    env_file: .env
+    environment:
+      DATABASE_PATH: /app/data/poly_site.db
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  worker:
+    build: .
+    image: poly-site
+    command: npx tsx worker/index.ts
+    env_file: .env
+    environment:
+      DATABASE_PATH: /app/data/poly_site.db
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
+    depends_on:
+      web:
+        condition: service_healthy

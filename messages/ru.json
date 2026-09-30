@@ -1,0 +1,71 @@
+{
+  "Metadata": {
+    "siteName": "PolySignals",
+    "catalogTitle": "Каталог сигналов Polymarket с AI-анализом",
+    "catalogDescription": "Каталог торговых сигналов Polymarket: прогнозы ИИ, edge, рыночные цены и детали рынков. Сортировка по дате и edge, анализ на русском и английском.",
+    "signalMetaTitle": "{question}: edge {edge} — AI-анализ",
+    "signalMetaDescription": "Рынок Polymarket «{question}». Цена рынка {market}, прогноз ИИ {predicted}, edge {edge}. Подробный AI-анализ и детали события."
+  },
+  "Header": {
+    "brand": "PolySignals",
+    "brandSubtitle": "AI-анализ Polymarket",
+    "catalog": "Каталог",
+    "language": "Язык"
+  },
+  "Catalog": {
+    "h1": "Сигналы Polymarket",
+    "lead": "Каталог событий, где прогноз ИИ отличается от рыночной цены. Каждый сигнал — это edge: разница между справедливой вероятностью и текущим котированием.",
+    "sortLabel": "Сортировка",
+    "sortDate": "По дате",
+    "sortEdge": "По edge",
+    "categoriesLabel": "Категории",
+    "categoryAll": "Все",
+    "empty": "Сигналов пока нет. Движок анализа запускается ежедневно — загляните позже.",
+    "resultsCount": "Сигналов: {count}",
+    "pagination": "Страница {page} из {total}",
+    "prev": "Назад",
+    "next": "Далее",
+    "marketPrice": "Рынок",
+    "predictedPrice": "Прогноз ИИ",
+    "edgeLabel": "Edge",
+    "pending": "Ожидает",
+    "correct": "Угадано",
+    "incorrect": "Ошибка"
+  },
+  "Signal": {
+    "analysisTitle": "AI-анализ",
+    "detailsTitle": "Детали рынка",
+    "question": "Вопрос рынка",
+    "outcome": "Исход",
+    "marketPrice": "Цена рынка",
+    "predictedPrice": "Прогноз ИИ",
+    "edge": "Edge",
+    "currentPrice": "Текущая цена",
+    "volume": "Оборот",
+    "liquidity": "Ликвидность",
+    "endDate": "Дата окончания",
+    "published": "Опубликовано",
+    "updated": "Обновлено",
+    "category": "Категория",
+    "recommendation": "Рекомендация",
+    "buy": "Покупка",
+    "noAction": "Без действия",
+    "status": "Статус",
+    "statusPending": "Рынок открыт",
+    "statusCorrect": "Прогноз подтвердился",
+    "statusIncorrect": "Прогноз не подтвердился",
+    "openOnPolymarket": "Открыть на Polymarket",
+    "breadcrumbHome": "Каталог",
+    "backToCatalog": "Вернуться в каталог",
+    "disclaimer": "Не является инвестиционной рекомендацией. Решения принимаются на ваш риск."
+  },
+  "Footer": {
+    "note": "Данные рынков предоставлены Polymarket. Анализ подготовлен ИИ-моделью.",
+    "rights": "© {year} PolySignals"
+  },
+  "NotFound": {
+    "title": "Страница не найдена",
+    "text": "Такой страницы нет — возможно, сигнал уже удалён или ссылка устарела.",
+    "link": "Вернуться в каталог"
+  }
+}
