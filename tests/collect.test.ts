@@ -1,4 +1,4 @@
-import {afterEach, beforeEach, describe, expect, it} from 'vitest';
+import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -12,7 +12,7 @@ import {
   listSignalsForStats,
   markAnalyzed
 } from '@/lib/repo';
-import {collectSignals} from '@/lib/collect';
+import {collectSignals, dailyAddSignals} from '@/lib/collect';
 
 let tmpDir: string;
 
@@ -193,5 +193,42 @@ describe('analyzed_events bookkeeping', () => {
     expect(filterUnanalyzed(['a', 'b', 'c'])).toEqual(['c']);
     markAnalyzed(['b']);
     expect(countAnalyzed()).toBe(2);
+  });
+});
+
+describe('dailyAddSignals', () => {
+  const opts = {pageLimit: 100, maxOffset: 100, concurrency: 1, batchSize: 3};
+
+  it('adds exactly the quota of new signals on top of the catalog', async () => {
+    const first = await dailyAddSignals(2, opts, mockFetch());
+
+    expect(first.errors).toEqual([]);
+    expect(first.stored).toBe(2);
+    expect(first.signals).toBe(2);
+    expect(first.target).toBe(2); // started from 0
+    expect(countAnalyzed()).toBe(3); // all events analysed even though quota is 2
+
+    // Published texts were enriched for the stored signals
+    const {listSignals} = await import('@/lib/repo');
+    const rows = listSignals({pageSize: 10});
+    expect(rows.items.every((row) => row.reason_ru.length >= 600)).toBe(true);
+  }, 20_000);
+
+  it('does nothing on the second run when every event is already analysed', async () => {
+    await dailyAddSignals(2, opts, mockFetch());
+    const second = await dailyAddSignals(2, opts, mockFetch());
+
+    expect(second.freshEvents).toBe(0);
+    expect(second.stored).toBe(0);
+    expect(second.signals).toBe(2);
+  }, 20_000);
+
+  it('is a no-op when the quota is disabled', async () => {
+    const spy = vi.fn();
+    const result = await dailyAddSignals(0, opts, spy as unknown as typeof fetch);
+
+    expect(result.stored).toBe(0);
+    expect(result.signals).toBe(0);
+    expect(spy).not.toHaveBeenCalled();
   });
 });

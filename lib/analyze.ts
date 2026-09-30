@@ -2,7 +2,8 @@
  * Analysis engine: Polymarket events -> DeepSeek predictions -> catalog signals.
  *
  * Pure selection logic lives in exported helpers so it can be unit-tested;
- * network I/O is isolated in `runAnalysis`.
+ * network I/O is isolated in `runAnalysis` (single-page re-analysis) and in
+ * `lib/collect.ts` (quota-driven runs used by the daily job).
  */
 import {
   analyzeBatch,
@@ -163,6 +164,13 @@ export interface SelectOptions {
   maxPerCategory: number;
   /** Usage already present in the catalog (for incremental collection runs). */
   initial?: {groups?: Map<string, number>; categories?: Map<string, number>};
+  /**
+   * Per-run budget: at most N *new* signals per category within one run.
+   * `used` is mutable state owned by the caller, so the budget survives
+   * across several selection rounds of the same run.
+   */
+  runCategoryCap?: number;
+  runCategoryUsed?: Map<string, number>;
 }
 
 /**
@@ -186,6 +194,12 @@ export function selectDiverse(
     const category = (candidate.category ?? 'other').toLowerCase();
     if ((byGroup.get(group) ?? 0) >= options.maxPerGroup) continue;
     if ((byCategory.get(category) ?? 0) >= options.maxPerCategory) continue;
+
+    if (options.runCategoryCap !== undefined && options.runCategoryUsed) {
+      const used = options.runCategoryUsed.get(category) ?? 0;
+      if (used >= options.runCategoryCap) continue;
+      options.runCategoryUsed.set(category, used + 1);
+    }
 
     byGroup.set(group, (byGroup.get(group) ?? 0) + 1);
     byCategory.set(category, (byCategory.get(category) ?? 0) + 1);

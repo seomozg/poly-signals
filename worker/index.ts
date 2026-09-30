@@ -10,8 +10,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import cron, {type ScheduledTask} from 'node-cron';
-import {runAnalysis, enrichStoredSignals} from '../lib/analyze';
-import {collectSignals} from '../lib/collect';
+import {enrichStoredSignals} from '../lib/analyze';
+import {collectSignals, dailyAddSignals} from '../lib/collect';
 import {refreshSignals} from '../lib/refresh';
 import {config} from '../lib/config';
 
@@ -34,26 +34,38 @@ function writeState(state: WorkerState): void {
   fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2), 'utf8');
 }
 
-/** Runs one analysis cycle and records the timestamp. */
-async function analyzeNow(label: string): Promise<void> {
+/** Adds the daily quota of NEW signals and records the timestamp. */
+async function dailyNow(label: string): Promise<void> {
   const started = Date.now();
-  console.log('[worker] %s: analysis started', label);
+  console.log('[worker] %s: daily quota +%d started', label, config.dailyNewSignals);
   try {
-    const result = await runAnalysis();
+    const result = await dailyAddSignals(config.dailyNewSignals, {
+      concurrency: config.collectConcurrency
+    });
     writeState({...readState(), lastAnalysisAt: new Date().toISOString()});
     console.log(
-      '[worker] %s: fetched=%d eligible=%d analysed=%d stored=%d errors=%d (%dms)',
+      '[worker] %s: signals=%d (+%d of %d) fresh=%d analysed=%d enriched=%d errors=%d (%dms)',
       label,
-      result.fetched,
-      result.eligible,
-      result.analysed,
+      result.signals,
       result.stored,
+      config.dailyNewSignals,
+      result.freshEvents,
+      result.analysedEvents,
+      result.enriched,
       result.errors.length,
       Date.now() - started
     );
-    for (const error of result.errors) console.error('[worker] %s: %s', label, error);
+    if (result.stored < config.dailyNewSignals) {
+      console.warn(
+        '[worker] %s: quota not met (%d/%d) — check the fresh-event pool or thresholds',
+        label,
+        result.stored,
+        config.dailyNewSignals
+      );
+    }
+    for (const error of result.errors.slice(0, 5)) console.error('[worker] %s: %s', label, error);
   } catch (error) {
-    console.error('[worker] %s: analysis failed: %s', label, (error as Error).message);
+    console.error('[worker] %s: daily run failed: %s', label, (error as Error).message);
   }
 }
 
@@ -73,19 +85,19 @@ async function refreshNow(label: string): Promise<void> {
   }
 }
 
-/** Catches up on analysis if the last run is older than the configured window. */
+/** Catches up if the last daily run is older than the configured window. */
 async function catchUpIfNeeded(): Promise<void> {
   const last = readState().lastAnalysisAt;
   if (!last) {
-    await analyzeNow('startup');
+    await dailyNow('startup');
     return;
   }
   const ageHours = (Date.now() - new Date(last).getTime()) / 3_600_000;
   if (ageHours > config.analysisMaxAgeHours) {
-    console.log('[worker] last analysis was %.1f hours ago — catching up', ageHours);
-    await analyzeNow('catch-up');
+    console.log('[worker] last daily run was %.1f hours ago — catching up', ageHours);
+    await dailyNow('catch-up');
   } else {
-    console.log('[worker] last analysis %.1f hours ago — nothing to catch up', ageHours);
+    console.log('[worker] last daily run %.1f hours ago — nothing to catch up', ageHours);
   }
 }
 
@@ -93,7 +105,7 @@ function startScheduler(): void {
   const tasks: ScheduledTask[] = [];
 
   tasks.push(
-    cron.schedule(config.analysisCron, () => void analyzeNow('cron-analysis'), {
+    cron.schedule(config.analysisCron, () => void dailyNow('cron-analysis'), {
       timezone: 'UTC'
     })
   );
@@ -158,7 +170,7 @@ async function main(): Promise<void> {
   }
 
   if (once) {
-    if (!refreshOnly) await analyzeNow('once');
+    if (!refreshOnly) await dailyNow('once');
     await refreshNow('once');
     process.exit(0);
   }

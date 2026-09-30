@@ -61,6 +61,11 @@ export interface CollectOptions {
   concurrency?: number;
   /** Events per analysis request. */
   batchSize?: number;
+  /**
+   * Max NEW signals per category within this run. Defaults to `ceil(quota / 4)`
+   * so a single run can never be dominated by one topic.
+   */
+  runCategoryCap?: number;
   onProgress?: (info: CollectProgress) => void;
 }
 
@@ -161,6 +166,10 @@ export async function collectSignals(
   const batchSize = options.batchSize ?? config.analyzeBatchSize;
   const maxPerCategory = Math.max(1, Math.ceil(target / 5));
   const errors: string[] = [];
+  const startCount = countSignals();
+  const quota = Math.max(0, target - startCount);
+  const runCategoryCap = options.runCategoryCap ?? Math.max(1, Math.ceil(quota / 4));
+  const runCategoryUsed = new Map<string, number>();
 
   const report = (phase: CollectProgress['phase'], analysed: number, candidates: number) =>
     options.onProgress?.({
@@ -197,7 +206,9 @@ export async function collectSignals(
       limit: remaining,
       maxPerGroup: config.maxPerGroup,
       maxPerCategory,
-      initial: usage
+      initial: usage,
+      runCategoryCap,
+      runCategoryUsed
     });
 
     let written = 0;
@@ -214,6 +225,7 @@ export async function collectSignals(
   };
 
   for (const group of chunk(batches, concurrency)) {
+    if (countSignals() >= target) break;
     await mapPool(group, concurrency, async (batch) => {
       try {
         const responses = await analyzeEventsBatch(batch, {}, fetchImpl);
@@ -285,5 +297,39 @@ export async function collectSignals(
   });
 
   return result;
+}
+
+/**
+ * Daily quota job: adds `dailyNew` NEW signals on top of what the catalog
+ * already holds (target = current + quota). Reuses the collection sweep, so
+ * only never-analysed events are paid for, and stops as soon as the quota
+ * is reached. Used by the daily cron, `--once` and POST /api/run-analysis.
+ */
+export async function dailyAddSignals(
+  dailyNew: number = config.dailyNewSignals,
+  options: Omit<CollectOptions, 'target'> = {},
+  fetchImpl: typeof fetch = fetch
+): Promise<CollectResult> {
+  const current = countSignals();
+  const quota = Math.max(0, Math.floor(dailyNew));
+
+  if (quota === 0) {
+    console.log('[collect] daily quota disabled (DAILY_NEW_SIGNALS=0)');
+    return {
+      target: current,
+      signals: current,
+      freshEvents: 0,
+      analysedEvents: 0,
+      analyzedTotal: countAnalyzed(),
+      candidates: 0,
+      stored: 0,
+      enriched: 0,
+      errors: []
+    };
+  }
+
+  const target = current + quota;
+  console.log('[collect] daily quota: +%d signals → target %d', quota, target);
+  return collectSignals({...options, target}, fetchImpl);
 }
 

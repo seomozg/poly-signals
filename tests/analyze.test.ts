@@ -287,6 +287,54 @@ describe('selectDiverse', () => {
     // b is blocked by the group cap, c fits its own category
     expect(selected.map((c) => c.eventSlug)).toEqual(['a', 'c']);
   });
+
+  it('enforces a per-run category budget on top of the cumulative caps', () => {
+    const candidates = [
+      make({eventSlug: 'a', title: 'A', edge: 0.3, category: 'Sports'}),
+      make({eventSlug: 'b', title: 'B', edge: 0.2, category: 'Sports'}),
+      make({eventSlug: 'c', title: 'C', edge: 0.1, category: 'Politics'}),
+      make({eventSlug: 'd', title: 'D', edge: 0.05, category: 'Weather'})
+    ];
+    const used = new Map<string, number>();
+
+    const selected = selectDiverse(candidates, {
+      limit: 10,
+      maxPerGroup: 5,
+      maxPerCategory: 50,
+      runCategoryCap: 1,
+      runCategoryUsed: used
+    });
+
+    expect(selected.map((c) => c.eventSlug)).toEqual(['a', 'c', 'd']);
+    expect(used.get('sports')).toBe(1);
+    expect(used.get('politics')).toBe(1);
+  });
+
+  it('the run budget survives across selection rounds', () => {
+    const used = new Map<string, number>();
+    const options = {
+      limit: 10,
+      maxPerGroup: 5,
+      maxPerCategory: 50,
+      runCategoryCap: 2,
+      runCategoryUsed: used
+    };
+
+    const first = selectDiverse(
+      [
+        make({eventSlug: 'a', title: 'A', edge: 0.3, category: 'Sports'}),
+        make({eventSlug: 'b', title: 'B', edge: 0.2, category: 'Sports'})
+      ],
+      options
+    );
+    const second = selectDiverse(
+      [make({eventSlug: 'c', title: 'C', edge: 0.25, category: 'Sports'})],
+      options
+    );
+
+    expect(first).toHaveLength(2);
+    expect(second).toHaveLength(0); // the budget of 2 per run is already spent
+  });
 });
 
 describe('parseAnalysisResponse', () => {

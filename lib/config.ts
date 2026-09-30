@@ -108,6 +108,8 @@ export const config = {
   collectTarget: num('COLLECT_TARGET', 200),
   /** Concurrent DeepSeek requests during collection */
   collectConcurrency: num('COLLECT_CONCURRENCY', 3),
+  /** How many NEW signals the daily job adds (`0` disables the quota) */
+  dailyNewSignals: num('DAILY_NEW_SIGNALS', 20),
 
   // --- API access control for manual triggers ---
   analysisToken: process.env.ANALYSIS_TOKEN ?? '',
