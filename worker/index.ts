@@ -10,7 +10,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import cron, {type ScheduledTask} from 'node-cron';
-import {runAnalysis} from '../lib/analyze';
+import {runAnalysis, enrichStoredSignals} from '../lib/analyze';
 import {refreshSignals} from '../lib/refresh';
 import {config} from '../lib/config';
 
@@ -120,10 +120,18 @@ function startScheduler(): void {
 async function main(): Promise<void> {
   const once = process.argv.includes('--once');
   const refreshOnly = process.argv.includes('--refresh-only');
+  const enrichOnly = process.argv.includes('--enrich-only');
 
   console.log('[worker] database: %s', config.databasePath);
   console.log('[worker] polymarket: %s', config.polymarketApiUrl);
   console.log('[worker] deepseek key: %s', config.deepseekApiKey ? 'set' : 'MISSING');
+
+  if (enrichOnly) {
+    // Backfill: give stored signals a full-length analysis text.
+    const result = await enrichStoredSignals();
+    console.log('[worker] enrich-only: checked=%d updated=%d', result.checked, result.updated);
+    process.exit(0);
+  }
 
   if (once) {
     if (!refreshOnly) await analyzeNow('once');

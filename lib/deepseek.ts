@@ -120,12 +120,17 @@ export interface DeepSeekOptions {
   maxTokens?: number;
 }
 
-/** Single chat-completions request. Returns parsed, validated analyses. */
-export async function analyzeBatch(
-  userPrompt: string,
+/**
+ * Shared chat-completions call: sends a system+user pair, extracts the JSON
+ * object out of the reply and validates it with the given schema.
+ */
+async function chatJson<T extends z.ZodTypeAny>(
+  system: string,
+  user: string,
+  schema: T,
   options: DeepSeekOptions = {},
   fetchImpl: typeof fetch = fetch
-): Promise<AnalysisResponse> {
+): Promise<z.infer<T>> {
   if (!config.deepseekApiKey) {
     throw new Error('DEEPSEEK_API_KEY is not set');
   }
@@ -142,8 +147,8 @@ export async function analyzeBatch(
       max_tokens: options.maxTokens ?? 8000,
       response_format: {type: 'json_object'},
       messages: [
-        {role: 'system', content: SYSTEM_PROMPT},
-        {role: 'user', content: userPrompt}
+        {role: 'system', content: system},
+        {role: 'user', content: user}
       ]
     })
   });
@@ -160,5 +165,115 @@ export async function analyzeBatch(
   if (!content) {
     throw new Error('DeepSeek returned an empty response');
   }
-  return parseAnalysisResponse(content);
+
+  const json = extractJsonObject(content);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(json);
+  } catch (error) {
+    throw new Error(
+      `DeepSeek returned invalid JSON: ${(error as Error).message}; preview=${content.slice(0, 200)}`
+    );
+  }
+  return schema.parse(parsed) as z.infer<T>;
+}
+
+/** Single chat-completions request. Returns parsed, validated analyses. */
+export function analyzeBatch(
+  userPrompt: string,
+  options: DeepSeekOptions = {},
+  fetchImpl: typeof fetch = fetch
+): Promise<AnalysisResponse> {
+  return chatJson(SYSTEM_PROMPT, userPrompt, AnalysisResponse, options, fetchImpl);
+}
+
+/* ------------------------------------------------------------------ *
+ * Phase 2: the long, published analysis text for the selected signals
+ * ------------------------------------------------------------------ */
+
+const ReasonResponse = z.object({
+  reasons: z
+    .array(
+      z.object({
+        marketId: z.string(),
+        reasonRu: z.string().min(1),
+        reasonEn: z.string().min(1)
+      })
+    )
+    .min(1)
+});
+
+export type ReasonResponse = z.infer<typeof ReasonResponse>;
+
+export const REASON_SYSTEM_PROMPT = `You are a senior prediction-market analyst writing the final
+analysis that will be published on a website next to a Polymarket signal.
+
+For each market you receive: the event, the market question, the outcome in question, the current
+market price, our model's probability estimate and the resulting edge (estimate minus price).
+
+Write a thorough, concrete analysis for each market:
+- reasonRu: 150-220 words in Russian; reasonEn: 150-220 words in English.
+- Use 3-4 short paragraphs: (1) what this market resolves on and the current situation;
+  (2) the key drivers, numbers and facts behind our estimate; (3) why the market price may be
+  mispriced and what has to happen for the outcome to win; (4) the main risks and what would
+  invalidate the idea.
+- Be specific, reference the numbers from the input, no filler, no hype, no disclaimers.
+- Plain text paragraphs separated by a blank line. No markdown, no headers, no bullet points.
+
+Answer ONLY with JSON of the shape
+{"reasons":[{"marketId":"...","reasonRu":"...","reasonEn":"..."}]}
+covering every market you were given, and nothing else.`;
+
+export interface ReasonRequest {
+  eventId: string;
+  eventTitle: string;
+  eventDescription?: string;
+  marketId: string;
+  question: string;
+  outcome: string;
+  marketPrice: number;
+  predicted: number;
+  edge: number;
+}
+
+/** Builds the phase-2 prompt — unlike phase 1, prices are included on purpose. */
+export function buildReasonPrompt(items: ReasonRequest[]): string {
+  const blocks = items.map((item) => {
+    const context = item.eventDescription
+      ? `\nEvent context: ${item.eventDescription.slice(0, 600)}`
+      : '';
+    return [
+      `marketId=${item.marketId}`,
+      `event="${item.eventTitle}"${context}`,
+      `market question="${item.question}"`,
+      `outcome in question: ${item.outcome}`,
+      `market price: ${item.marketPrice.toFixed(3)} (${Math.round(item.marketPrice * 100)}%)`,
+      `model estimate: ${item.predicted.toFixed(3)} (${Math.round(item.predicted * 100)}%)`,
+      `edge: ${(item.edge * 100).toFixed(1)} percentage points`
+    ].join('\n');
+  });
+  return `Write the published analyses for these signals:\n\n${blocks.join('\n\n')}`;
+}
+
+/** Validates a phase-2 reply (exported for unit tests). */
+export function parseReasonResponse(raw: string): ReasonResponse {
+  const json = extractJsonObject(raw);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(json);
+  } catch (error) {
+    throw new Error(
+      `DeepSeek returned invalid JSON: ${(error as Error).message}; preview=${raw.slice(0, 200)}`
+    );
+  }
+  return ReasonResponse.parse(parsed);
+}
+
+/** Phase-2 request: long analysis texts for a small chunk of signals. */
+export function generateReasons(
+  items: ReasonRequest[],
+  options: DeepSeekOptions = {},
+  fetchImpl: typeof fetch = fetch
+): Promise<ReasonResponse> {
+  return chatJson(REASON_SYSTEM_PROMPT, buildReasonPrompt(items), ReasonResponse, options, fetchImpl);
 }

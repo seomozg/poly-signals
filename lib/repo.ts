@@ -167,6 +167,24 @@ export function listCategories(): string[] {
   return rows.map((r) => r.category);
 }
 
+/** Signals whose analysis text is still the brief phase-1 version. */
+export function listSignalsNeedingReason(minChars: number): Signal[] {
+  return getDb()
+    .prepare(
+      `SELECT * FROM signals
+       WHERE LENGTH(reason_ru) < ? OR LENGTH(reason_en) < ?
+       ORDER BY edge DESC`
+    )
+    .all(minChars, minChars) as Signal[];
+}
+
+/** Rewrites the analysis text of one signal. */
+export function updateReasons(id: number, reasonRu: string, reasonEn: string): void {
+  getDb()
+    .prepare('UPDATE signals SET reason_ru = ?, reason_en = ?, updated_at = ? WHERE id = ?')
+    .run(reasonRu, reasonEn, nowIso(), id);
+}
+
 /** Minimal counter for the footer/health endpoint. */
 export function countSignals(): number {
   return (getDb().prepare('SELECT COUNT(*) AS c FROM signals').get() as {c: number}).c;

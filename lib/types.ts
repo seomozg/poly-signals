@@ -113,6 +113,8 @@ export interface SignalCandidate {
   recommendation: 'BUY' | 'NO_ACTION';
   reasonRu: string;
   reasonEn: string;
+  /** Raw Polymarket event description — fed to the phase-2 analysis prompt. */
+  description?: string;
   image?: string;
   icon?: string;
   endDate?: string;

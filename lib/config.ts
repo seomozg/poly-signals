@@ -55,7 +55,10 @@ export const config = {
 
   // --- DeepSeek ---
   deepseekApiUrl: process.env.DEEPSEEK_API_URL ?? 'https://api.deepseek.com/v1/chat/completions',
-  deepseekApiKey: process.env.DEEPSEEK_API_KEY ?? '',
+  /** Read lazily: `.env` may be loaded after this module, and tests set it too. */
+  get deepseekApiKey(): string {
+    return process.env.DEEPSEEK_API_KEY ?? '';
+  },
   deepseekModel: process.env.DEEPSEEK_MODEL ?? 'deepseek-chat',
 
   // --- Analysis engine (mirrors the proven defaults of the reference bot) ---

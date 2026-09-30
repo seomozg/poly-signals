@@ -10,6 +10,7 @@
     "lint": "eslint .",
     "worker": "tsx worker/index.ts",
     "worker:once": "tsx worker/index.ts --once",
+    "worker:enrich": "tsx worker/index.ts --enrich-only",
     "test": "vitest run",
     "test:watch": "vitest"
   },
