@@ -8,7 +8,8 @@ import {config} from './config';
 
 /** One market analysis as produced by the model. */
 const MarketAnalysis = z.object({
-  marketId: z.string(),
+  // The model occasionally writes an id as a number — coerce it to a string.
+  marketId: z.coerce.string(),
   outcomes: z
     .array(
       z.object({
@@ -195,9 +196,10 @@ const ReasonResponse = z.object({
   reasons: z
     .array(
       z.object({
-        marketId: z.string(),
-        reasonRu: z.string().min(1),
-        reasonEn: z.string().min(1)
+        // ids sometimes arrive as numbers, texts occasionally as other scalars
+        marketId: z.coerce.string(),
+        reasonRu: z.coerce.string().min(1),
+        reasonEn: z.coerce.string().min(1)
       })
     )
     .min(1)

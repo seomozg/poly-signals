@@ -76,6 +76,8 @@ export function normalizeEvent(event: GammaEvent): NormalizedEvent {
 /** Query parameters accepted by GET /events. */
 export interface FetchEventsParams {
   limit?: number;
+  /** Pagination offset — needed to walk through more than one page of events. */
+  offset?: number;
   maxDaysAhead?: number;
   /** Minimum hours until the event ends (skips ultra-short markets). */
   minHoursToEnd?: number;
@@ -101,7 +103,7 @@ export function buildEventsQuery(
     active: 'true',
     closed: 'false',
     limit: String(limit),
-    offset: '0',
+    offset: String(params.offset ?? 0),
     order: params.order ?? 'endDate',
     ascending: String(params.ascending ?? true),
     end_date_min: start.toISOString(),
@@ -115,7 +117,6 @@ export async function fetchUpcomingEvents(
   fetchImpl: typeof fetch = fetch
 ): Promise<NormalizedEvent[]> {
   const query = buildEventsQuery(params);
-
   const response = await fetchImpl(`${config.polymarketApiUrl}/events?${query.toString()}`, {
     headers: {accept: 'application/json'},
     // Events change slowly; a short server-side cache keeps ISR renders cheap.

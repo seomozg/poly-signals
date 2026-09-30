@@ -64,7 +64,7 @@ poly_site/
 │   ├── seo.ts, format.ts, types.ts
 ├── worker/index.ts               # cron: анализ, обновление цен, catch-up
 ├── messages/{ru,en}.json         # переводы интерфейса
-├── tests/                        # Vitest (50 тестов)
+├── tests/                        # Vitest (71 тест)
 ├── Dockerfile, docker-compose.yml
 └── .env.example
 ```
@@ -82,7 +82,23 @@ npm run dev               # http://localhost:3000 -> /ru
 ```bash
 npm run worker:once       # один прогон: анализ + обновление цен
 npm run worker            # cron-режим: ежедневный анализ + обновление цен каждые 3 часа
+npm run worker:collect    # одноразово вырастить каталог до COLLECT_TARGET сигналов (200)
 ```
+
+### Режим сбора (`worker:collect`)
+
+Используется, чтобы быстро наполнить каталог (например, до 200 сигналов):
+
+1. Обходит **5 «окон» Gamma API** (разные сортировки: `endDate` asc/desc, `volume` asc/desc) —
+   так покрывается 2000+ подходящих событий, а не одна страница из 600.
+2. Событие анализируется **один раз** (`analyzed_events`), повторные запуски почти бесплатны.
+3. Пачки по 3 события идут в DeepSeek **параллельно** (`COLLECT_CONCURRENCY`), после каждой
+   группы пачек сильнейшие кандидаты сохраняются с учётом уже накопленных лимитов
+   (`MAX_SIGNALS_PER_GROUP`, категория ≤ `ceil(target/5)`), пока не наберётся `COLLECT_TARGET`.
+4. Финальный проход дописывает развёрнутый текст всем сигналам, у которых он ещё краткий.
+
+Отладка: `COLLECT_TARGET=50 COLLECT_CONCURRENCY=2 npm run worker:collect`.
+Код выхода 0 — цель достигнута, 2 — не хватило сигналов (нужно расширить окна/пороги).
 
 Полезные команды:
 

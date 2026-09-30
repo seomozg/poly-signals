@@ -44,7 +44,8 @@ export default async function CatalogPage({params, searchParams}: Props) {
   const page = Math.max(1, Number(query.page) || 1);
 
   const {items, total, totalPages} = listSignals({sort, page, category});
-  const categories = listCategories();
+  // Top categories only: with 40+ tags the chip row would overwhelm a minimal layout.
+  const categories = listCategories(12);
 
   const labels = {
     marketPrice: cardLabels('marketPrice'),

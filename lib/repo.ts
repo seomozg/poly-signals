@@ -156,15 +156,64 @@ export function listSignals(filters: CatalogFilters = {}): ListResult {
   return {items, total, page, pageSize, totalPages: Math.max(1, Math.ceil(total / pageSize))};
 }
 
-/** Distinct categories present in the catalog (for filter chips). */
-export function listCategories(): string[] {
-  const rows = getDb()
-    .prepare(
-      `SELECT category FROM signals WHERE category IS NOT NULL AND category != ''
-       GROUP BY category ORDER BY category`
-    )
-    .all() as Array<{category: string}>;
+/**
+ * Distinct categories for the filter chips, most populated first.
+ * `limit` keeps the row compact (rare categories are noise).
+ */
+export function listCategories(limit?: number): string[] {
+  const base = `SELECT category FROM signals WHERE category IS NOT NULL AND category != ''
+       GROUP BY category ORDER BY COUNT(*) DESC, category ASC`;
+  const rows = (
+    limit && limit > 0
+      ? getDb().prepare(`${base} LIMIT ?`).all(limit)
+      : getDb().prepare(base).all()
+  ) as Array<{category: string}>;
   return rows.map((r) => r.category);
+}
+
+/** Title + category of every stored signal (used for diversity caps). */
+export function listSignalsForStats(): Array<{title: string; category: string | null}> {
+  return getDb()
+    .prepare('SELECT title, category FROM signals')
+    .all() as Array<{title: string; category: string | null}>;
+}
+
+/* ---------------- analyzed events (token-spending bookkeeping) ---------------- */
+
+/** Marks events as analysed so collection runs never pay for them twice. */
+export function markAnalyzed(eventIds: string[]): void {
+  if (eventIds.length === 0) return;
+  const db = getDb();
+  const ts = nowIso();
+  const stmt = db.prepare(
+    'INSERT INTO analyzed_events (event_id, analyzed_at) VALUES (?, ?) ON CONFLICT(event_id) DO UPDATE SET analyzed_at = excluded.analyzed_at'
+  );
+  db.transaction(() => {
+    for (const id of eventIds) stmt.run(id, ts);
+  })();
+}
+
+/** Filters out events that are already in `analyzed_events`. */
+export function filterUnanalyzed(eventIds: string[]): string[] {
+  if (eventIds.length === 0) return [];
+  const db = getDb();
+  const known = new Set(
+    (
+      db
+        .prepare(
+          `SELECT event_id FROM analyzed_events WHERE event_id IN (${eventIds
+            .map(() => '?')
+            .join(',')})`
+        )
+        .all(...eventIds) as Array<{event_id: string}>
+    ).map((row) => row.event_id)
+  );
+  return eventIds.filter((id) => !known.has(id));
+}
+
+/** How many events have been analysed so far (progress reporting). */
+export function countAnalyzed(): number {
+  return (getDb().prepare('SELECT COUNT(*) AS c FROM analyzed_events').get() as {c: number}).c;
 }
 
 /** Signals whose analysis text is still the brief phase-1 version. */

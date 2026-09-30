@@ -11,6 +11,7 @@
     "worker": "tsx worker/index.ts",
     "worker:once": "tsx worker/index.ts --once",
     "worker:enrich": "tsx worker/index.ts --enrich-only",
+    "worker:collect": "tsx worker/index.ts --collect",
     "test": "vitest run",
     "test:watch": "vitest"
   },

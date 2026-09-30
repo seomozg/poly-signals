@@ -134,7 +134,21 @@ describe('listSignals', () => {
   });
 
   it('lists distinct categories', () => {
-    expect(listCategories()).toEqual(['Politics', 'Weather']);
+    // seeded: Weather x2, Politics x1 → most populated first, ties by name
+    expect(listCategories()).toEqual(['Weather', 'Politics']);
+  });
+
+  it('orders categories by popularity and applies a limit', () => {
+    upsertSignal(
+      candidate({eventId: 'e4', eventSlug: 'delta', marketId: 'm4', category: 'Sports'})
+    );
+    upsertSignal(
+      candidate({eventId: 'e5', eventSlug: 'epsilon', marketId: 'm5', category: 'Sports'})
+    );
+
+    // Sports 2, Weather 2, Politics 1
+    expect(listCategories(1)).toEqual(['Sports']);
+    expect(listCategories()).toEqual(['Sports', 'Weather', 'Politics']);
   });
 });
 

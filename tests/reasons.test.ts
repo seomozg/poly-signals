@@ -93,6 +93,14 @@ describe('parseReasonResponse', () => {
   it('rejects malformed JSON', () => {
     expect(() => parseReasonResponse('{oops')).toThrow(/invalid JSON/);
   });
+
+  it('coerces numeric market ids and non-string texts', () => {
+    const raw = JSON.stringify({
+      reasons: [{marketId: 5122389, reasonRu: longRu, reasonEn: longEn}]
+    });
+    const parsed = parseReasonResponse(raw);
+    expect(parsed.reasons[0].marketId).toBe('5122389');
+  });
 });
 
 describe('enrichReasons', () => {
@@ -137,6 +145,41 @@ describe('enrichReasons', () => {
     const spy = vi.fn();
     expect(await enrichReasons([], spy as unknown as typeof fetch)).toBe(0);
     expect(spy).not.toHaveBeenCalled();
+  });
+
+  it('splits a failing chunk down to single signals', async () => {
+    const first = candidate({marketId: 'm1'});
+    const second = candidate({marketId: 'm2', title: 'Other event', eventId: 'e2'});
+
+    // The mock rejects any request carrying more than one market.
+    const oneAtATime = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as {messages: Array<{content: string}>};
+      const user = body.messages[1]?.content ?? '';
+      const ids = [...user.matchAll(/marketId=(\S+)/g)].map((m) => m[1]);
+      if (ids.length > 1) throw new Error('too many markets in one request');
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          choices: [
+            {
+              message: {
+                content: JSON.stringify({
+                  reasons: ids.map((id) => ({marketId: id, reasonRu: longRu, reasonEn: longEn}))
+                })
+              }
+            }
+          ]
+        }),
+        text: async () => ''
+      };
+    }) as unknown as typeof fetch;
+
+    const updated = await enrichReasons([first, second], oneAtATime);
+
+    expect(updated).toBe(2);
+    expect(first.reasonRu).toBe(longRu);
+    expect(second.reasonEn).toBe(longEn);
   });
 });
 

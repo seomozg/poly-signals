@@ -265,6 +265,28 @@ describe('selectDiverse', () => {
     expect(selected).toHaveLength(2);
     expect(selected[0].edge).toBeGreaterThan(selected[1].edge);
   });
+
+  it('accounts for signals already stored in the catalog', () => {
+    const candidates = [
+      make({eventSlug: 'a', title: 'Game - 1st', edge: 0.3, category: 'Sports'}),
+      make({eventSlug: 'b', title: 'Game - 2nd', edge: 0.2, category: 'Sports'}),
+      make({eventSlug: 'c', title: 'Election', edge: 0.1, category: 'Politics'})
+    ];
+
+    const selected = selectDiverse(candidates, {
+      limit: 10,
+      maxPerGroup: 2,
+      maxPerCategory: 2,
+      initial: {
+        groups: new Map([['game', 1]]),
+        categories: new Map([['sports', 1]])
+      }
+    });
+
+    // 'game' already has 1 of 2 slots → the strongest (a) takes the last slot,
+    // b is blocked by the group cap, c fits its own category
+    expect(selected.map((c) => c.eventSlug)).toEqual(['a', 'c']);
+  });
 });
 
 describe('parseAnalysisResponse', () => {

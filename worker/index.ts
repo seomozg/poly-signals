@@ -11,6 +11,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import cron, {type ScheduledTask} from 'node-cron';
 import {runAnalysis, enrichStoredSignals} from '../lib/analyze';
+import {collectSignals} from '../lib/collect';
 import {refreshSignals} from '../lib/refresh';
 import {config} from '../lib/config';
 
@@ -128,9 +129,32 @@ async function main(): Promise<void> {
 
   if (enrichOnly) {
     // Backfill: give stored signals a full-length analysis text.
-    const result = await enrichStoredSignals();
+    const result = await enrichStoredSignals(600, fetch, config.collectConcurrency);
     console.log('[worker] enrich-only: checked=%d updated=%d', result.checked, result.updated);
     process.exit(0);
+  }
+
+  if (process.argv.includes('--collect')) {
+    // One-off: grow the catalog to COLLECT_TARGET signals (then enrich them).
+    console.log('[worker] collect target=%d concurrency=%d', config.collectTarget, config.collectConcurrency);
+    const started = Date.now();
+    const result = await collectSignals({
+      target: config.collectTarget,
+      concurrency: config.collectConcurrency
+    });
+    console.log(
+      '[worker] collect done: signals=%d/%d fresh=%d analysed=%d stored=%d enriched=%d errors=%d (%dms)',
+      result.signals,
+      result.target,
+      result.freshEvents,
+      result.analysedEvents,
+      result.stored,
+      result.enriched,
+      result.errors.length,
+      Date.now() - started
+    );
+    for (const error of result.errors.slice(0, 10)) console.error('[worker] %s', error);
+    process.exit(result.signals >= result.target ? 0 : 2);
   }
 
   if (once) {

@@ -103,6 +103,12 @@ export const config = {
   /** Guard: if the last successful analysis is older than this, run it on startup */
   analysisMaxAgeHours: num('ANALYSIS_MAX_AGE_HOURS', 25),
 
+  // --- One-off collection mode (`npm run worker:collect`) ---
+  /** Grow the catalog up to this many signals */
+  collectTarget: num('COLLECT_TARGET', 200),
+  /** Concurrent DeepSeek requests during collection */
+  collectConcurrency: num('COLLECT_CONCURRENCY', 3),
+
   // --- API access control for manual triggers ---
   analysisToken: process.env.ANALYSIS_TOKEN ?? '',
 

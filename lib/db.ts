@@ -44,6 +44,12 @@ const MIGRATIONS: string[] = [
   CREATE INDEX idx_signals_created_at ON signals(created_at DESC);
   CREATE INDEX idx_signals_edge ON signals(edge DESC);
   CREATE INDEX idx_signals_category ON signals(category);
+  `,
+  `
+  CREATE TABLE analyzed_events (
+    event_id TEXT PRIMARY KEY,
+    analyzed_at TEXT NOT NULL
+  );
   `
 ];
 

@@ -4,9 +4,21 @@
  * Pure selection logic lives in exported helpers so it can be unit-tested;
  * network I/O is isolated in `runAnalysis`.
  */
-import {analyzeBatch, buildUserPrompt, generateReasons, type AnalysisResponse} from './deepseek';
+import {
+  analyzeBatch,
+  buildUserPrompt,
+  generateReasons,
+  type AnalysisResponse,
+  type DeepSeekOptions
+} from './deepseek';
 import {fetchUpcomingEvents} from './polymarket';
-import {listSignalsNeedingReason, updateReasons, upsertSignal} from './repo';
+import {
+  listSignalsNeedingReason,
+  markAnalyzed,
+  updateReasons,
+  upsertSignal
+} from './repo';
+import {chunk, mapPool} from './pool';
 import {config} from './config';
 import type {NormalizedEvent, SignalCandidate} from './types';
 
@@ -149,18 +161,21 @@ export interface SelectOptions {
   maxPerGroup: number;
   /** At most N signals per category. */
   maxPerCategory: number;
+  /** Usage already present in the catalog (for incremental collection runs). */
+  initial?: {groups?: Map<string, number>; categories?: Map<string, number>};
 }
 
 /**
  * Greedy diversity selection: strongest edges first, skipping candidates that
  * would exceed the per-group or per-category caps. Pure function, unit-tested.
+ * `initial` seeds the counters with what is already stored in the catalog.
  */
 export function selectDiverse(
   candidates: SignalCandidate[],
   options: SelectOptions
 ): SignalCandidate[] {
-  const byGroup = new Map<string, number>();
-  const byCategory = new Map<string, number>();
+  const byGroup = new Map(options.initial?.groups ?? []);
+  const byCategory = new Map(options.initial?.categories ?? []);
   const selected: SignalCandidate[] = [];
 
   const sorted = [...candidates].sort((a, b) => b.edge - a.edge);
@@ -205,18 +220,20 @@ export function trimMarkets<T extends NormalizedEvent>(event: T, maxMarkets: num
  */
 export async function enrichReasons(
   candidates: SignalCandidate[],
-  fetchImpl: typeof fetch = fetch
+  fetchImpl: typeof fetch = fetch,
+  concurrency = 1
 ): Promise<number> {
   if (candidates.length === 0) return 0;
 
-  const chunkSize = 3;
   const updated = new Set<SignalCandidate>();
 
-  for (let i = 0; i < candidates.length; i += chunkSize) {
-    const chunk = candidates.slice(i, i + chunkSize);
+  // Phase-2 texts are long (~2000 chars per signal across both languages), so a
+  // chunk of three can hit the output token cap. Keep chunks small and split a
+  // failing chunk down to single signals instead of dropping it.
+  const enrichChunk = async (items: SignalCandidate[]): Promise<void> => {
     try {
       const response = await generateReasons(
-        chunk.map((candidate) => ({
+        items.map((candidate) => ({
           eventId: candidate.eventId,
           eventTitle: candidate.title,
           eventDescription: candidate.description,
@@ -232,20 +249,30 @@ export async function enrichReasons(
       );
 
       for (const reason of response.reasons) {
-        const target = chunk.find((candidate) => candidate.marketId === reason.marketId);
+        const target = items.find((candidate) => candidate.marketId === reason.marketId);
         if (!target) continue;
         target.reasonRu = reason.reasonRu;
         target.reasonEn = reason.reasonEn;
         updated.add(target);
       }
     } catch (error) {
+      const message = (error as Error).message;
+      if (items.length === 1) {
+        console.warn('[analysis] long analysis failed, keeping brief text: %s', message);
+        return;
+      }
       console.warn(
-        '[analysis] long analysis failed for chunk %d, keeping brief text: %s',
-        i / chunkSize + 1,
-        (error as Error).message
+        '[analysis] reason chunk of %d failed (%s) — splitting',
+        items.length,
+        message.slice(0, 120)
       );
+      const half = Math.ceil(items.length / 2);
+      await enrichChunk(items.slice(0, half));
+      await enrichChunk(items.slice(half));
     }
-  }
+  };
+
+  await mapPool(chunk(candidates, 2), concurrency, enrichChunk);
 
   return updated.size;
 }
@@ -257,7 +284,8 @@ export async function enrichReasons(
  */
 export async function enrichStoredSignals(
   minChars = 600,
-  fetchImpl: typeof fetch = fetch
+  fetchImpl: typeof fetch = fetch,
+  concurrency = 1
 ): Promise<{checked: number; updated: number}> {
   const rows = listSignalsNeedingReason(minChars);
   if (rows.length === 0) return {checked: 0, updated: 0};
@@ -282,7 +310,7 @@ export async function enrichStoredSignals(
     url: row.polymarket_url ?? ''
   }));
 
-  await enrichReasons(candidates, fetchImpl);
+  await enrichReasons(candidates, fetchImpl, concurrency);
 
   let written = 0;
   for (let i = 0; i < candidates.length; i++) {
@@ -312,11 +340,13 @@ export interface RunAnalysisResult {
  * single-event granularity instead of dropping the whole batch.
  */
 export async function analyzeEventsBatch(
-  batch: NormalizedEvent[]
+  batch: NormalizedEvent[],
+  options: DeepSeekOptions = {},
+  fetchImpl: typeof fetch = fetch
 ): Promise<AnalysisResponse[]> {
   if (batch.length === 0) return [];
   try {
-    return [await analyzeBatch(buildUserPrompt(batch))];
+    return [await analyzeBatch(buildUserPrompt(batch), options, fetchImpl)];
   } catch (error) {
     if (batch.length === 1) throw error;
     console.warn(
@@ -332,7 +362,7 @@ export async function analyzeEventsBatch(
 }
 
 /** One batch result turned into catalogue candidates + diagnostics. */
-function collectBatch(
+export function evaluateResponses(
   batch: NormalizedEvent[],
   responses: AnalysisResponse[],
   state: {
@@ -393,7 +423,8 @@ export async function runAnalysis(): Promise<RunAnalysisResult> {
     const batch = eligible.slice(i, i + config.analyzeBatchSize);
     try {
       const responses = await analyzeEventsBatch(batch);
-      collectBatch(batch, responses, state);
+      evaluateResponses(batch, responses, state);
+      markAnalyzed(batch.map((event) => event.id));
     } catch (error) {
       const message = `batch ${i / config.analyzeBatchSize + 1}: ${(error as Error).message}`;
       errors.push(message);
