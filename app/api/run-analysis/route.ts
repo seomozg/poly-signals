@@ -1,7 +1,12 @@
 import {NextResponse} from 'next/server';
 import {dailyAddSignals} from '@/lib/collect';
+import {setAiCallSink} from '@/lib/deepseek';
+import {getCallStats, recordAiCall} from '@/lib/repo';
 import {refreshSignals} from '@/lib/refresh';
 import {config} from '@/lib/config';
+
+// Journal every DeepSeek request made through this endpoint (table ai_calls).
+setAiCallSink(recordAiCall);
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
@@ -25,11 +30,17 @@ export async function POST(request: Request) {
   }
 
   try {
+    const runStart = new Date().toISOString();
     const analysis = await dailyAddSignals(config.dailyNewSignals, {
       concurrency: config.collectConcurrency
     });
     const refresh = await refreshSignals();
-    return NextResponse.json({ok: analysis.errors.length === 0, analysis, refresh});
+    return NextResponse.json({
+      ok: analysis.errors.length === 0,
+      analysis,
+      refresh,
+      deepseek: getCallStats(runStart)
+    });
   } catch (error) {
     return NextResponse.json({ok: false, error: (error as Error).message}, {status: 500});
   }

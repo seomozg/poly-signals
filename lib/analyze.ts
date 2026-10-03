@@ -9,6 +9,7 @@ import {
   analyzeBatch,
   buildUserPrompt,
   generateReasons,
+  DeepSeekFatalError,
   type AnalysisResponse,
   type DeepSeekOptions
 } from './deepseek';
@@ -240,11 +241,14 @@ export async function enrichReasons(
   if (candidates.length === 0) return 0;
 
   const updated = new Set<SignalCandidate>();
+  let stopped = false;
 
   // Phase-2 texts are long (~2000 chars per signal across both languages), so a
   // chunk of three can hit the output token cap. Keep chunks small and split a
   // failing chunk down to single signals instead of dropping it.
+  // Fatal errors (401/402) abort the whole enrichment immediately.
   const enrichChunk = async (items: SignalCandidate[]): Promise<void> => {
+    if (stopped) return;
     try {
       const response = await generateReasons(
         items.map((candidate) => ({
@@ -271,6 +275,11 @@ export async function enrichReasons(
       }
     } catch (error) {
       const message = (error as Error).message;
+      if (error instanceof DeepSeekFatalError) {
+        stopped = true;
+        console.error('[analysis] ABORT enrichment (fatal): %s', message.slice(0, 200));
+        throw error;
+      }
       if (items.length === 1) {
         console.warn('[analysis] long analysis failed, keeping brief text: %s', message);
         return;
@@ -352,6 +361,8 @@ export interface RunAnalysisResult {
  * Analyses a batch of events. If the model reply is unusable (usually a
  * truncated response), the batch is split in half and retried down to
  * single-event granularity instead of dropping the whole batch.
+ * Fatal errors (401/402 — no balance/bad key) are rethrown immediately:
+ * splitting would only burn thousands of doomed requests.
  */
 export async function analyzeEventsBatch(
   batch: NormalizedEvent[],
@@ -360,8 +371,11 @@ export async function analyzeEventsBatch(
 ): Promise<AnalysisResponse[]> {
   if (batch.length === 0) return [];
   try {
-    return [await analyzeBatch(buildUserPrompt(batch), options, fetchImpl)];
+    return [
+      await analyzeBatch(buildUserPrompt(batch), {...options, items: batch.length}, fetchImpl)
+    ];
   } catch (error) {
+    if (error instanceof DeepSeekFatalError) throw error;
     if (batch.length === 1) throw error;
     console.warn(
       '[analysis] batch of %d failed (%s) — splitting and retrying',
@@ -369,8 +383,8 @@ export async function analyzeEventsBatch(
       (error as Error).message
     );
     const half = Math.ceil(batch.length / 2);
-    const left = await analyzeEventsBatch(batch.slice(0, half));
-    const right = await analyzeEventsBatch(batch.slice(half));
+    const left = await analyzeEventsBatch(batch.slice(0, half), options, fetchImpl);
+    const right = await analyzeEventsBatch(batch.slice(half), options, fetchImpl);
     return [...left, ...right];
   }
 }
@@ -440,6 +454,12 @@ export async function runAnalysis(): Promise<RunAnalysisResult> {
       evaluateResponses(batch, responses, state);
       markAnalyzed(batch.map((event) => event.id));
     } catch (error) {
+      if (error instanceof DeepSeekFatalError) {
+        const message = `fatal: ${(error as Error).message}`;
+        errors.push(message);
+        console.error('[analysis] ABORT: %s', (error as Error).message.slice(0, 200));
+        break;
+      }
       const message = `batch ${i / config.analyzeBatchSize + 1}: ${(error as Error).message}`;
       errors.push(message);
       console.error('[analysis] %s', message);
@@ -469,7 +489,17 @@ export async function runAnalysis(): Promise<RunAnalysisResult> {
   });
 
   // Phase 2: full-length published analyses for the selected signals only.
-  const enriched = await enrichReasons(top);
+  let enriched = 0;
+  try {
+    enriched = await enrichReasons(top);
+  } catch (error) {
+    if (error instanceof DeepSeekFatalError) {
+      errors.push(`fatal: ${(error as Error).message}`);
+      console.error('[analysis] ABORT enrichment: %s', (error as Error).message.slice(0, 200));
+    } else {
+      throw error;
+    }
+  }
   console.log('[analysis] selected=%d enriched=%d', top.length, enriched);
 
   let stored = 0;

@@ -23,11 +23,13 @@ import {
   countAnalyzed,
   countSignals,
   filterUnanalyzed,
+  getCallStats,
   listSignalsForStats,
   markAnalyzed,
   upsertSignal
 } from './repo';
 import {chunk, mapPool} from './pool';
+import {DeepSeekFatalError} from './deepseek';
 import {config} from './config';
 import type {NormalizedEvent, SignalCandidate} from './types';
 
@@ -166,6 +168,8 @@ export async function collectSignals(
   const batchSize = options.batchSize ?? config.analyzeBatchSize;
   const maxPerCategory = Math.max(1, Math.ceil(target / 5));
   const errors: string[] = [];
+  const startedAt = new Date().toISOString();
+  let aborted = false;
   const startCount = countSignals();
   const quota = Math.max(0, target - startCount);
   const runCategoryCap = options.runCategoryCap ?? Math.max(1, Math.ceil(quota / 4));
@@ -225,13 +229,23 @@ export async function collectSignals(
   };
 
   for (const group of chunk(batches, concurrency)) {
-    if (countSignals() >= target) break;
+    if (aborted || countSignals() >= target) break;
     await mapPool(group, concurrency, async (batch) => {
+      if (aborted) return; // fatal error already happened — no more requests
       try {
         const responses = await analyzeEventsBatch(batch, {}, fetchImpl);
         evaluateResponses(batch, responses, state);
         markAnalyzed(batch.map((event) => event.id));
       } catch (error) {
+        if (error instanceof DeepSeekFatalError) {
+          aborted = true;
+          errors.push(`fatal: ${(error as Error).message}`);
+          console.error(
+            '[collect] ABORT: %s — top up the DeepSeek balance (or check the API key), the run is stopped',
+            (error as Error).message.slice(0, 200)
+          );
+          return;
+        }
         errors.push(`batch: ${(error as Error).message}`);
         console.error('[collect] batch failed: %s', (error as Error).message);
       }
@@ -256,23 +270,51 @@ export async function collectSignals(
       phase: 'analyse'
     });
 
-    if (signals >= target) break;
+    if (aborted || signals >= target) break;
   }
 
   stored += storeRound();
 
   // --- phase: enrich -------------------------------------------------
-  console.log('[collect] enriching published analyses for stored signals…');
-  options.onProgress?.({
-    signals: countSignals(),
-    target,
-    analysed: state.analysed,
-    candidates: state.candidates.length,
-    stored,
-    freshEvents: fresh.length,
-    phase: 'enrich'
-  });
-  const enrich = await enrichStoredSignals(600, fetchImpl, concurrency);
+  let enriched = 0;
+  if (aborted) {
+    console.log('[collect] skipping enrichment: the run was aborted');
+  } else {
+    console.log('[collect] enriching published analyses for stored signals…');
+    options.onProgress?.({
+      signals: countSignals(),
+      target,
+      analysed: state.analysed,
+      candidates: state.candidates.length,
+      stored,
+      freshEvents: fresh.length,
+      phase: 'enrich'
+    });
+    try {
+      const enrich = await enrichStoredSignals(600, fetchImpl, concurrency);
+      enriched = enrich.updated;
+    } catch (error) {
+      if (error instanceof DeepSeekFatalError) {
+        aborted = true;
+        errors.push(`fatal: ${(error as Error).message}`);
+        console.error('[collect] enrichment aborted: %s', (error as Error).message.slice(0, 200));
+      } else {
+        throw error;
+      }
+    }
+  }
+
+  // Per-request journal summary (lib/repo.getCallStats reads the ai_calls table).
+  const calls = getCallStats(startedAt);
+  console.log(
+    '[collect] ai calls: total=%d ok=%d failed=%d (402=%d) in_tokens=%d out_tokens=%d',
+    calls.total,
+    calls.ok,
+    calls.failed,
+    calls.byStatus402,
+    calls.inputTokens,
+    calls.outputTokens
+  );
 
   const result: CollectResult = {
     target,
@@ -282,7 +324,7 @@ export async function collectSignals(
     analyzedTotal: countAnalyzed(),
     candidates: state.candidates.length,
     stored,
-    enriched: enrich.updated,
+    enriched,
     errors
   };
 

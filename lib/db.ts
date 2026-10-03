@@ -50,6 +50,21 @@ const MIGRATIONS: string[] = [
     event_id TEXT PRIMARY KEY,
     analyzed_at TEXT NOT NULL
   );
+  `,
+  `
+  CREATE TABLE ai_calls (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at TEXT NOT NULL,
+    phase TEXT NOT NULL,
+    status INTEGER,
+    ok INTEGER NOT NULL,
+    items INTEGER,
+    input_tokens INTEGER,
+    output_tokens INTEGER,
+    model TEXT NOT NULL,
+    error TEXT
+  );
+  CREATE INDEX idx_ai_calls_created ON ai_calls(created_at DESC);
   `
 ];
 

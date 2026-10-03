@@ -119,11 +119,66 @@ export function parseAnalysisResponse(raw: string): AnalysisResponse {
 export interface DeepSeekOptions {
   temperature?: number;
   maxTokens?: number;
+  /** How many events/signals the request carries (stored in the call journal). */
+  items?: number;
+  /** Phase label for the call journal: 'analysis' | 'reasons'. */
+  phase?: 'analysis' | 'reasons';
+}
+
+/**
+ * Errors that will never succeed by retrying (no balance, bad key).
+ * Callers must abort the whole run instead of splitting/retrying — otherwise
+ * a single failed run burns thousands of pointless requests.
+ */
+export class DeepSeekFatalError extends Error {
+  readonly status?: number;
+
+  constructor(message: string, status?: number) {
+    super(message);
+    this.name = 'DeepSeekFatalError';
+    this.status = status;
+  }
+}
+
+const FATAL_STATUSES = new Set([401, 402]);
+
+/** One journal row per HTTP request to DeepSeek (see lib/repo.recordAiCall). */
+export interface AiCallRecord {
+  phase: 'analysis' | 'reasons';
+  status: number | null;
+  ok: boolean;
+  items: number | null;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  model: string;
+  error: string | null;
+}
+
+type AiCallSink = (record: AiCallRecord) => void;
+let aiCallSink: AiCallSink | null = null;
+
+/**
+ * Installs the persistent call journal (repo.recordAiCall). Kept as an injectable
+ * sink so unit tests never write to a real database; production entrypoints
+ * (worker, /api/run-analysis) install it at startup.
+ */
+export function setAiCallSink(sink: AiCallSink | null): void {
+  aiCallSink = sink;
+}
+
+function recordCall(record: AiCallRecord): void {
+  try {
+    aiCallSink?.(record);
+  } catch (error) {
+    // The journal must never break the analysis itself.
+    console.warn('[deepseek] failed to record call: %s', (error as Error).message);
+  }
 }
 
 /**
  * Shared chat-completions call: sends a system+user pair, extracts the JSON
  * object out of the reply and validates it with the given schema.
+ * Every request is written to the call journal (when a sink is installed).
  */
 async function chatJson<T extends z.ZodTypeAny>(
   system: string,
@@ -136,32 +191,77 @@ async function chatJson<T extends z.ZodTypeAny>(
     throw new Error('DEEPSEEK_API_KEY is not set');
   }
 
-  const response = await fetchImpl(config.deepseekApiUrl, {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      authorization: `Bearer ${config.deepseekApiKey}`
-    },
-    body: JSON.stringify({
+  const phase: 'analysis' | 'reasons' = options.phase ?? 'analysis';
+
+  let response: Response;
+  try {
+    response = await fetchImpl(config.deepseekApiUrl, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${config.deepseekApiKey}`
+      },
+      body: JSON.stringify({
+        model: config.deepseekModel,
+        temperature: options.temperature ?? 0.2,
+        max_tokens: options.maxTokens ?? 8000,
+        response_format: {type: 'json_object'},
+        messages: [
+          {role: 'system', content: system},
+          {role: 'user', content: user}
+        ]
+      })
+    });
+  } catch (error) {
+    recordCall({
+      phase,
+      status: null,
+      ok: false,
+      items: options.items ?? null,
+      inputTokens: null,
+      outputTokens: null,
       model: config.deepseekModel,
-      temperature: options.temperature ?? 0.2,
-      max_tokens: options.maxTokens ?? 8000,
-      response_format: {type: 'json_object'},
-      messages: [
-        {role: 'system', content: system},
-        {role: 'user', content: user}
-      ]
-    })
-  });
+      error: (error as Error).message.slice(0, 300)
+    });
+    throw error;
+  }
 
   if (!response.ok) {
     const detail = await response.text().catch(() => '');
-    throw new Error(`DeepSeek API error ${response.status}: ${detail.slice(0, 300)}`);
+    recordCall({
+      phase,
+      status: response.status,
+      ok: false,
+      items: options.items ?? null,
+      inputTokens: null,
+      outputTokens: null,
+      model: config.deepseekModel,
+      error: detail.slice(0, 300)
+    });
+    const message = `DeepSeek API error ${response.status}: ${detail.slice(0, 300)}`;
+    if (FATAL_STATUSES.has(response.status)) {
+      throw new DeepSeekFatalError(message, response.status);
+    }
+    throw new Error(message);
   }
 
   const payload = (await response.json()) as {
+    model?: string;
     choices?: Array<{message?: {content?: string}}>;
+    usage?: {prompt_tokens?: number; completion_tokens?: number};
   };
+  const usage = payload.usage ?? {};
+  recordCall({
+    phase,
+    status: response.status,
+    ok: true,
+    items: options.items ?? null,
+    inputTokens: usage.prompt_tokens ?? null,
+    outputTokens: usage.completion_tokens ?? null,
+    model: payload.model ?? config.deepseekModel,
+    error: null
+  });
+
   const content = payload.choices?.[0]?.message?.content;
   if (!content) {
     throw new Error('DeepSeek returned an empty response');
@@ -185,7 +285,7 @@ export function analyzeBatch(
   options: DeepSeekOptions = {},
   fetchImpl: typeof fetch = fetch
 ): Promise<AnalysisResponse> {
-  return chatJson(SYSTEM_PROMPT, userPrompt, AnalysisResponse, options, fetchImpl);
+  return chatJson(SYSTEM_PROMPT, userPrompt, AnalysisResponse, {phase: 'analysis', ...options}, fetchImpl);
 }
 
 /* ------------------------------------------------------------------ *
@@ -277,5 +377,11 @@ export function generateReasons(
   options: DeepSeekOptions = {},
   fetchImpl: typeof fetch = fetch
 ): Promise<ReasonResponse> {
-  return chatJson(REASON_SYSTEM_PROMPT, buildReasonPrompt(items), ReasonResponse, options, fetchImpl);
+  return chatJson(
+    REASON_SYSTEM_PROMPT,
+    buildReasonPrompt(items),
+    ReasonResponse,
+    {phase: 'reasons', items: items.length, ...options},
+    fetchImpl
+  );
 }

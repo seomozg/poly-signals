@@ -215,6 +215,26 @@ ssh -i <key> root@85.198.67.207 "tar -xzf /root/poly-site.tar.gz -C /opt/poly-si
 `docker-compose ps`, `docker logs poly-signals-worker-1`, `nginx -t`,
 и пройтись по чужим доменам (см. `deploy/check-sites.mjs`).
 
+- **Поштучный учёт вызовов DeepSeek** — таблица `ai_calls` (фаза, HTTP-статус, токены входа/выхода,
+  число событий/сигналов в запросе, ошибка). Каждый запрос пишется из `lib/deepseek.ts`
+  через синх-установленный sink (`setAiCallSink(recordAiCall)` — в воркере и в `/api/run-analysis`),
+  в юнит-тестах sink не установлен, поэтому тесты не трогают БД. После прогона в лог пишется сводка:
+  `[collect] ai calls: total=… ok=… failed=… (402=…) in_tokens=… out_tokens=…`.
+
+  Сколько было вызовов за N дней:
+  ```sql
+  SELECT substr(created_at,1,10) day, phase, COUNT(*) calls,
+         SUM(ok) ok, SUM(status = 402) err402,
+         SUM(input_tokens) in_tok, SUM(output_tokens) out_tok
+  FROM ai_calls GROUP BY day, phase ORDER BY day;
+  ```
+  (обёртка в коде: `listAiCallsByDay()` / `getCallStats(since)`).
+
+- **Fail-fast при нехватке баланса** — `401/402` больше не ретраятся: `chatJson` бросает
+  `DeepSeekFatalError`, пачки не делятся, прогон прерывается сразу (`[collect] ABORT: … top up
+  the DeepSeek balance`) и в логе появляется `DEEPSEEK ACCOUNT ERROR`. Вместо ~1900 бесполезных
+  запросов за ночь — 1–2. Ошибки транспорта/обрезанные ответы по-прежнему делятся и повторяются.
+
 ## Данные и SEO-заметки
 
 - База сайта — `data/poly_site.db` (в `.gitignore`). Миграции применяются автоматически.

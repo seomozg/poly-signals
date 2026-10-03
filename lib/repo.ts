@@ -3,6 +3,7 @@
  * so the logic can be unit-tested without a running server.
  */
 import {getDb} from './db';
+import type {AiCallRecord} from './deepseek';
 import type {Signal, SignalCandidate} from './types';
 
 export const DEFAULT_PAGE_SIZE = 12;
@@ -214,6 +215,101 @@ export function filterUnanalyzed(eventIds: string[]): string[] {
 /** How many events have been analysed so far (progress reporting). */
 export function countAnalyzed(): number {
   return (getDb().prepare('SELECT COUNT(*) AS c FROM analyzed_events').get() as {c: number}).c;
+}
+
+/* ---------------- ai_calls journal (per-request DeepSeek accounting) ---------------- */
+
+/** Persists one journal row. Never throws — accounting must not break analysis. */
+export function recordAiCall(record: AiCallRecord): void {
+  try {
+    getDb()
+      .prepare(
+        `INSERT INTO ai_calls
+           (created_at, phase, status, ok, items, input_tokens, output_tokens, model, error)
+         VALUES (@createdAt, @phase, @status, @ok, @items, @inputTokens, @outputTokens, @model, @error)`
+      )
+      .run({
+        createdAt: nowIso(),
+        phase: record.phase,
+        status: record.status,
+        ok: record.ok ? 1 : 0,
+        items: record.items,
+        inputTokens: record.inputTokens,
+        outputTokens: record.outputTokens,
+        model: record.model,
+        error: record.error
+      });
+  } catch (error) {
+    console.warn('[repo] failed to record ai call: %s', (error as Error).message);
+  }
+}
+
+export interface CallStats {
+  total: number;
+  ok: number;
+  failed: number;
+  byStatus402: number;
+  inputTokens: number;
+  outputTokens: number;
+}
+
+/** Aggregated DeepSeek usage since a point in time (default: everything). */
+export function getCallStats(sinceIso?: string): CallStats {
+  const where = sinceIso ? 'WHERE created_at >= @since' : '';
+  const row = getDb()
+    .prepare(
+      `SELECT COUNT(*) total,
+              COALESCE(SUM(ok), 0) ok,
+              COALESCE(SUM(input_tokens), 0) inputTokens,
+              COALESCE(SUM(output_tokens), 0) outputTokens,
+              COALESCE(SUM(status = 402), 0) by402
+       FROM ai_calls ${where}`
+    )
+    .get(sinceIso ? {since: sinceIso} : {}) as {
+    total: number;
+    ok: number;
+    inputTokens: number;
+    outputTokens: number;
+    by402: number;
+  };
+  return {
+    total: row.total,
+    ok: row.ok,
+    failed: row.total - row.ok,
+    byStatus402: row.by402,
+    inputTokens: row.inputTokens,
+    outputTokens: row.outputTokens
+  };
+}
+
+export interface AiCallDayRow {
+  day: string;
+  phase: string;
+  calls: number;
+  ok: number;
+  failed: number;
+  err402: number;
+  input_tokens: number | null;
+  output_tokens: number | null;
+}
+
+/** Per-day/per-phase journal — answers "how many DeepSeek calls in N days". */
+export function listAiCallsByDay(): AiCallDayRow[] {
+  return getDb()
+    .prepare(
+      `SELECT substr(created_at,1,10) day,
+              phase,
+              COUNT(*) calls,
+              COALESCE(SUM(ok), 0) ok,
+              COALESCE(SUM(ok = 0), 0) failed,
+              COALESCE(SUM(status = 402), 0) err402,
+              SUM(input_tokens) input_tokens,
+              SUM(output_tokens) output_tokens
+       FROM ai_calls
+       GROUP BY day, phase
+       ORDER BY day DESC, phase`
+    )
+    .all() as AiCallDayRow[];
 }
 
 /** Signals whose analysis text is still the brief phase-1 version. */

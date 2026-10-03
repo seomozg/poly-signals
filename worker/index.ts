@@ -12,8 +12,13 @@ import path from 'node:path';
 import cron, {type ScheduledTask} from 'node-cron';
 import {enrichStoredSignals} from '../lib/analyze';
 import {collectSignals, dailyAddSignals} from '../lib/collect';
+import {setAiCallSink} from '../lib/deepseek';
+import {getCallStats, recordAiCall} from '../lib/repo';
 import {refreshSignals} from '../lib/refresh';
 import {config} from '../lib/config';
+
+// Per-request DeepSeek journal (table ai_calls) — installed once for all runs.
+setAiCallSink(recordAiCall);
 
 const STATE_FILE = path.join(path.dirname(config.databasePath), 'worker-state.json');
 
@@ -37,6 +42,7 @@ function writeState(state: WorkerState): void {
 /** Adds the daily quota of NEW signals and records the timestamp. */
 async function dailyNow(label: string): Promise<void> {
   const started = Date.now();
+  const runStart = new Date().toISOString();
   console.log('[worker] %s: daily quota +%d started', label, config.dailyNewSignals);
   try {
     const result = await dailyAddSignals(config.dailyNewSignals, {
@@ -63,9 +69,35 @@ async function dailyNow(label: string): Promise<void> {
         config.dailyNewSignals
       );
     }
+    reportDeepSeek(label, runStart, result.errors);
     for (const error of result.errors.slice(0, 5)) console.error('[worker] %s: %s', label, error);
   } catch (error) {
     console.error('[worker] %s: daily run failed: %s', label, (error as Error).message);
+  }
+}
+
+/**
+ * Prints the per-run journal summary and an explicit call to action when the
+ * run was cut short by a fatal DeepSeek error (402 no balance / 401 bad key).
+ */
+function reportDeepSeek(label: string, runStartIso: string, errors: string[]): void {
+  const stats = getCallStats(runStartIso);
+  console.log(
+    '[worker] %s: deepseek calls total=%d ok=%d failed=%d (402=%d) tokens in=%d out=%d',
+    label,
+    stats.total,
+    stats.ok,
+    stats.failed,
+    stats.byStatus402,
+    stats.inputTokens,
+    stats.outputTokens
+  );
+  if (errors.some((e) => e.startsWith('fatal:'))) {
+    console.error(
+      '[worker] %s: DEEPSEEK ACCOUNT ERROR — top up the balance at platform.deepseek.com; the run was aborted after %d request(s) instead of retrying',
+      label,
+      stats.total
+    );
   }
 }
 
@@ -147,8 +179,16 @@ async function main(): Promise<void> {
 
   if (enrichOnly) {
     // Backfill: give stored signals a full-length analysis text.
-    const result = await enrichStoredSignals(600, fetch, config.collectConcurrency);
-    console.log('[worker] enrich-only: checked=%d updated=%d', result.checked, result.updated);
+    const runStart = new Date().toISOString();
+    try {
+      const result = await enrichStoredSignals(600, fetch, config.collectConcurrency);
+      console.log('[worker] enrich-only: checked=%d updated=%d', result.checked, result.updated);
+      reportDeepSeek('enrich-only', runStart, []);
+    } catch (error) {
+      const message = (error as Error).message;
+      reportDeepSeek('enrich-only', runStart, [`fatal: ${message}`]);
+      console.error('[worker] enrich-only failed: %s', message.slice(0, 200));
+    }
     process.exit(0);
   }
 
@@ -156,6 +196,7 @@ async function main(): Promise<void> {
     // One-off: grow the catalog to COLLECT_TARGET signals (then enrich them).
     console.log('[worker] collect target=%d concurrency=%d', config.collectTarget, config.collectConcurrency);
     const started = Date.now();
+    const runStart = new Date().toISOString();
     const result = await collectSignals({
       target: config.collectTarget,
       concurrency: config.collectConcurrency
@@ -171,6 +212,7 @@ async function main(): Promise<void> {
       result.errors.length,
       Date.now() - started
     );
+    reportDeepSeek('collect', runStart, result.errors);
     for (const error of result.errors.slice(0, 10)) console.error('[worker] %s', error);
     process.exit(result.signals >= result.target ? 0 : 2);
   }
