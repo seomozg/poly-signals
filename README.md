@@ -1,11 +1,26 @@
 # PolySignals — каталог AI-анализов Polymarket
 
+**Демо: https://poly-signals.ru** (прод, ru/en) · Сигналы пополняются автоматически: +20 в день.
+
 Минималистичный сайт-каталог торговых сигналов Polymarket: движок на TypeScript собирает события
 через Gamma API, отправляет их в DeepSeek и сохраняет сигналы с edge (разница между прогнозом ИИ
 и рыночной ценой). Сайт двухязычный (ru/en), мобильный и оптимизирован под Google и Яндекс.
 
 Проект **полностью независим** от Telegram-бота в `C:\dev\poly` — свой код, своя база данных
 (`data/poly_site.db`), никаких общих модулей или API.
+
+Что внутри (для быстрого ознакомления):
+
+- **Next.js 16 (App Router) + TypeScript + Tailwind 4** — SSR/ISR, тёмная тема, mobile-first.
+- **AI-pipeline в два этапа**: пакетная оценка вероятностей без цен (против анкеринга модели)
+  → отбор сигналов по edge с диверсификацией → развёрнутый публикуемый текст только для отобранных.
+- **Cron-воркер**: `node-cron`, дневная квота +20 сигналов, обновление цен каждые 3 часа,
+  catch-up при перезапуске, учёт каждого запроса к LLM в таблице `ai_calls` (токены, статусы),
+  fail-fast при нехватке баланса.
+- **SEO под Google и Яндекс**: canonical/hreflang/x-default, sitemap, robots с `Host:`, JSON-LD,
+  мета-верификация, Яндекс.Метрика в начале `<body>`.
+- **Прод**: Docker (web + worker), nginx + Let's Encrypt (webroot), конфиги в `deploy/`.
+- **Качество**: 86 unit-тестов (Vitest), ESLint, CI в GitHub Actions.
 
 ## Стек
 
@@ -30,8 +45,9 @@
   (теги `1M/5M/15M/30M/1H/Up or Down`, события короче `MIN_EVENT_DURATION_HOURS` и
   закрывающиеся раньше `MIN_HOURS_TO_END`), а отбор кандидатов диверсифицирует выдачу —
   не более `MAX_SIGNALS_PER_GROUP` сигналов на матч/тему и `MAX_SIGNALS_PER_CATEGORY` на категорию.
-- **SEO**: SSR/ISR, canonical, hreflang, `sitemap.xml` (обновляется каждый час), `robots.txt`
-  (для Google и Яндекса), JSON-LD (`WebSite`, `ItemList`, `Article`, `BreadcrumbList`),
+- **SEO**: SSR/ISR, canonical, hreflang, `sitemap.xml` (**`force-dynamic`**: всегда строится из
+  живой БД, новые сигналы попадают туда сразу), `robots.txt` (для Google и Яндекса),
+  JSON-LD (`WebSite`, `ItemList`, `Article`, `BreadcrumbList`),
   уникальные title/description, OG-теги, мета-верификация Яндекс.Вебмастера и Google Search Console.
 - **Мобайл-френдли**: mobile-first разметка, тач-таргеты, оптимизированные изображения.
 - **Свежие данные**: воркер раз в сутки генерирует новые сигналы и каждые 3 часа обновляет
@@ -40,32 +56,38 @@
 ## Структура проекта
 
 ```
-poly_site/
+poly-signals/
 ├── app/
 │   ├── [locale]/                 # ru | en
-│   │   ├── layout.tsx            # html/lang, метаданные, шапка/подвал
+│   │   ├── layout.tsx            # html/lang, метаданные, шапка/подвал, Яндекс.Метрика
 │   │   ├── page.tsx              # каталог (сортировка, категории, пагинация)
 │   │   ├── not-found.tsx
+│   │   ├── [...rest]/page.tsx    # catch-all неизвестных роутов → локализованный 404
 │   │   └── signal/[slug]/page.tsx  # страница сигнала (ISR 5 мин)
 │   ├── api/health/route.ts       # health-check
-│   ├── api/run-analysis/route.ts # ручной запуск анализа (за токеном)
+│   ├── api/run-analysis/route.ts # ручной запуск квоты (за токеном)
 │   ├── sitemap.ts, robots.ts, icon.svg
 │   └── globals.css               # Tailwind 4 + базовые стили
-├── components/                   # SignalCard, LangSwitch, Breadcrumbs, ...
+├── components/                   # SignalCard, LangSwitch, Breadcrumbs, YandexMetrika, ...
 ├── i18n/                         # routing / request / navigation (next-intl)
 ├── lib/
-│   ├── config.ts                 # вся конфигурация из env
+│   ├── config.ts                 # вся конфигурация из env (ленивая загрузка .env)
 │   ├── db.ts                     # SQLite + миграции (user_version)
-│   ├── repo.ts                   # запросы каталога (date/edge, категории, пагинация)
-│   ├── polymarket.ts             # Gamma API: события, картинки, цены
-│   ├── deepseek.ts               # DeepSeek JSON-mode + zod-валидация
-│   ├── analyze.ts                # фильтры -> edge -> топ-N сигналов
+│   ├── repo.ts                   # запросы каталога + журнал ai_calls
+│   ├── polymarket.ts             # Gamma API: события, картинки, цены, пагинация «окон»
+│   ├── deepseek.ts               # DeepSeek JSON-mode, zod-валидация, журнал, fatal-ошибки
+│   ├── analyze.ts                # фаза 1: фильтры → edge → диверсификация → retry пачек
+│   ├── enrich.ts                 # фаза 2: развёрнутые публикуемые тексты + бэкфилл
+│   ├── collect.ts                # оркестрация сбора: окна Gamma, квоты, abort
 │   ├── refresh.ts                # обновление цен/статусов из Polymarket
-│   ├── seo.ts, format.ts, types.ts
-├── worker/index.ts               # cron: анализ, обновление цен, catch-up
+│   ├── pool.ts, seo.ts, format.ts, types.ts
+├── worker/index.ts               # cron: дневная квота, обновление цен, catch-up, сводки
 ├── messages/{ru,en}.json         # переводы интерфейса
-├── tests/                        # Vitest (71 тест)
+├── tests/                        # Vitest (86 тестов, 10 файлов)
+├── deploy/                       # nginx-вирталка + скрипт регрессии чужих сайтов
+├── .github/workflows/ci.yml      # CI: lint + tests + build
 ├── Dockerfile, docker-compose.yml
+├── LICENSE, README.md, README.en.md
 └── .env.example
 ```
 
@@ -147,6 +169,28 @@ curl -X POST -H "Authorization: Bearer <token>" localhost:3000/api/run-analysis
   рендерит тело layout в HTML, поэтому компонент дополнительно инициализирует счётчик
   на клиенте (guard по `window.ym` исключает двойной вызов на обычных страницах).
 
+## Наблюдаемость и устойчивость
+
+- **Поштучный учёт вызовов DeepSeek** — таблица `ai_calls` (фаза, HTTP-статус, токены входа/выхода,
+  число событий/сигналов в запросе, ошибка). Каждый запрос пишется из `lib/deepseek.ts`
+  через устанавливаемый sink (`setAiCallSink(recordAiCall)` — в воркере и в `/api/run-analysis`);
+  в юнит-тестах sink не установлен, поэтому тесты не трогают БД. После прогона в лог пишется сводка:
+  `[collect] ai calls: total=… ok=… failed=… (402=…) in_tokens=… out_tokens=…`.
+
+  Сколько было вызовов за N дней:
+  ```sql
+  SELECT substr(created_at,1,10) day, phase, COUNT(*) calls,
+         SUM(ok) ok, SUM(status = 402) err402,
+         SUM(input_tokens) in_tok, SUM(output_tokens) out_tok
+  FROM ai_calls GROUP BY day, phase ORDER BY day;
+  ```
+  (обёртка в коде: `listAiCallsByDay()` / `getCallStats(since)`).
+
+- **Fail-fast при нехватке баланса** — `401/402` больше не ретраятся: `chatJson` бросает
+  `DeepSeekFatalError`, пачки не делятся, прогон прерывается сразу (`[collect] ABORT: … top up
+  the DeepSeek balance`) и в логе появляется `DEEPSEEK ACCOUNT ERROR`. Вместо ~1900 бесполезных
+  запросов за ночь — 1–2. Ошибки транспорта/обрезанные ответы по-прежнему делятся и повторяются.
+
 ### Как строится сигнал
 
 1. Забор активных событий Gamma API → фильтры (ликвидность, цена, длительность, теги).
@@ -214,26 +258,6 @@ ssh -i <key> root@85.198.67.207 "tar -xzf /root/poly-site.tar.gz -C /opt/poly-si
 Проверки после деплоя: `curl -s https://poly-signals.ru/api/health`,
 `docker-compose ps`, `docker logs poly-signals-worker-1`, `nginx -t`,
 и пройтись по чужим доменам (см. `deploy/check-sites.mjs`).
-
-- **Поштучный учёт вызовов DeepSeek** — таблица `ai_calls` (фаза, HTTP-статус, токены входа/выхода,
-  число событий/сигналов в запросе, ошибка). Каждый запрос пишется из `lib/deepseek.ts`
-  через синх-установленный sink (`setAiCallSink(recordAiCall)` — в воркере и в `/api/run-analysis`),
-  в юнит-тестах sink не установлен, поэтому тесты не трогают БД. После прогона в лог пишется сводка:
-  `[collect] ai calls: total=… ok=… failed=… (402=…) in_tokens=… out_tokens=…`.
-
-  Сколько было вызовов за N дней:
-  ```sql
-  SELECT substr(created_at,1,10) day, phase, COUNT(*) calls,
-         SUM(ok) ok, SUM(status = 402) err402,
-         SUM(input_tokens) in_tok, SUM(output_tokens) out_tok
-  FROM ai_calls GROUP BY day, phase ORDER BY day;
-  ```
-  (обёртка в коде: `listAiCallsByDay()` / `getCallStats(since)`).
-
-- **Fail-fast при нехватке баланса** — `401/402` больше не ретраятся: `chatJson` бросает
-  `DeepSeekFatalError`, пачки не делятся, прогон прерывается сразу (`[collect] ABORT: … top up
-  the DeepSeek balance`) и в логе появляется `DEEPSEEK ACCOUNT ERROR`. Вместо ~1900 бесполезных
-  запросов за ночь — 1–2. Ошибки транспорта/обрезанные ответы по-прежнему делятся и повторяются.
 
 ## Данные и SEO-заметки
 
