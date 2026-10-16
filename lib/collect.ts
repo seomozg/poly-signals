@@ -13,12 +13,12 @@ import {fetchUpcomingEvents} from './polymarket';
 import {
   analyzeEventsBatch,
   evaluateResponses,
-  enrichStoredSignals,
   groupKey,
   passesFilters,
   selectDiverse,
   trimMarkets
 } from './analyze';
+import {enrichStoredSignals} from './enrich';
 import {
   countAnalyzed,
   countSignals,
@@ -44,7 +44,7 @@ export interface CollectView {
  * live API: these five views together cover 2000+ eligible events
  * (a single view only reaches ~600 events because the API caps offset/limit).
  */
-export const COLLECT_VIEWS: CollectView[] = [
+const COLLECT_VIEWS: CollectView[] = [
   {order: 'endDate', ascending: true, maxDaysAhead: 30},
   {order: 'endDate', ascending: false, maxDaysAhead: 90},
   {order: 'volume', ascending: false, maxDaysAhead: 90},

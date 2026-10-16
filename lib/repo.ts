@@ -6,7 +6,7 @@ import {getDb} from './db';
 import type {AiCallRecord} from './deepseek';
 import type {Signal, SignalCandidate} from './types';
 
-export const DEFAULT_PAGE_SIZE = 12;
+const DEFAULT_PAGE_SIZE = 12;
 
 /** Deterministic, human-readable page slug for a signal. */
 export function buildSlug(eventSlug: string, marketId: string): string {
@@ -19,7 +19,7 @@ export function buildSlug(eventSlug: string, marketId: string): string {
 }
 
 /** ISO-8601 UTC timestamp used for created_at / updated_at. */
-export function nowIso(): string {
+function nowIso(): string {
   return new Date().toISOString();
 }
 

@@ -1,6 +1,6 @@
 import {afterEach, describe, expect, it, vi} from 'vitest';
 import {buildReasonPrompt, generateReasons, parseReasonResponse} from '@/lib/deepseek';
-import {enrichReasons, enrichStoredSignals} from '@/lib/analyze';
+import {enrichReasons, enrichStoredSignals} from '@/lib/enrich';
 import type {SignalCandidate} from '@/lib/types';
 
 const longRu = Array(30).fill('анализ').join(' ');

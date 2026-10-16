@@ -10,7 +10,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import cron, {type ScheduledTask} from 'node-cron';
-import {enrichStoredSignals} from '../lib/analyze';
+import {enrichStoredSignals} from '../lib/enrich';
 import {collectSignals, dailyAddSignals} from '../lib/collect';
 import {setAiCallSink} from '../lib/deepseek';
 import {getCallStats, recordAiCall} from '../lib/repo';

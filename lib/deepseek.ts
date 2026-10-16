@@ -29,7 +29,7 @@ const AnalysisResponse = z.object({
 export type MarketAnalysis = z.infer<typeof MarketAnalysis>;
 export type AnalysisResponse = z.infer<typeof AnalysisResponse>;
 
-export const SYSTEM_PROMPT = `You are a professional prediction-market analyst.
+const SYSTEM_PROMPT = `You are a professional prediction-market analyst.
 You are given several Polymarket events with their markets.
 IMPORTANT: market prices are deliberately NOT shown to you — estimate every probability
 from first principles, using your own knowledge of the topic. Do not guess what "the market
@@ -73,7 +73,7 @@ export function buildUserPrompt(
  * The model occasionally appends commentary or gets truncated — we salvage
  * what we can instead of failing the whole batch.
  */
-export function extractJsonObject(raw: string): string {
+function extractJsonObject(raw: string): string {
   const cleaned = raw.trim().replace(/^```(?:json)?/i, '').replace(/```$/, '').trim();
   const start = cleaned.indexOf('{');
   if (start < 0) return cleaned;
@@ -307,7 +307,7 @@ const ReasonResponse = z.object({
 
 export type ReasonResponse = z.infer<typeof ReasonResponse>;
 
-export const REASON_SYSTEM_PROMPT = `You are a senior prediction-market analyst writing the final
+const REASON_SYSTEM_PROMPT = `You are a senior prediction-market analyst writing the final
 analysis that will be published on a website next to a Polymarket signal.
 
 For each market you receive: the event, the market question, the outcome in question, the current

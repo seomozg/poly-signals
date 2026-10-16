@@ -1,26 +1,18 @@
 /**
- * Analysis engine: Polymarket events -> DeepSeek predictions -> catalog signals.
+ * Phase 1 of the analysis engine: Polymarket events -> DeepSeek predictions
+ * -> catalog signal candidates (edge, diversity, batch retry).
  *
- * Pure selection logic lives in exported helpers so it can be unit-tested;
- * network I/O is isolated in `runAnalysis` (single-page re-analysis) and in
- * `lib/collect.ts` (quota-driven runs used by the daily job).
+ * Pure selection/filtering logic lives here so it can be unit-tested;
+ * orchestration over Gamma API windows is `lib/collect.ts`, published
+ * analysis texts are `lib/enrich.ts`, price refresh is `lib/refresh.ts`.
  */
 import {
   analyzeBatch,
   buildUserPrompt,
-  generateReasons,
   DeepSeekFatalError,
   type AnalysisResponse,
   type DeepSeekOptions
 } from './deepseek';
-import {fetchUpcomingEvents} from './polymarket';
-import {
-  listSignalsNeedingReason,
-  markAnalyzed,
-  updateReasons,
-  upsertSignal
-} from './repo';
-import {chunk, mapPool} from './pool';
 import {config} from './config';
 import type {NormalizedEvent, SignalCandidate} from './types';
 
@@ -228,136 +220,6 @@ export function trimMarkets<T extends NormalizedEvent>(event: T, maxMarkets: num
 }
 
 /**
- * Phase 2: replaces the brief phase-1 summary with a full published analysis
- * (150-220 words per language) for the signals that made the cut. Runs only
- * for the ≤ TARGET_SIGNALS_COUNT selected signals, so the long output never
- * hits the token budget of the bulk phase. On failure the brief text is kept.
- */
-export async function enrichReasons(
-  candidates: SignalCandidate[],
-  fetchImpl: typeof fetch = fetch,
-  concurrency = 1
-): Promise<number> {
-  if (candidates.length === 0) return 0;
-
-  const updated = new Set<SignalCandidate>();
-  let stopped = false;
-
-  // Phase-2 texts are long (~2000 chars per signal across both languages), so a
-  // chunk of three can hit the output token cap. Keep chunks small and split a
-  // failing chunk down to single signals instead of dropping it.
-  // Fatal errors (401/402) abort the whole enrichment immediately.
-  const enrichChunk = async (items: SignalCandidate[]): Promise<void> => {
-    if (stopped) return;
-    try {
-      const response = await generateReasons(
-        items.map((candidate) => ({
-          eventId: candidate.eventId,
-          eventTitle: candidate.title,
-          eventDescription: candidate.description,
-          marketId: candidate.marketId,
-          question: candidate.question,
-          outcome: candidate.outcome,
-          marketPrice: candidate.marketPrice,
-          predicted: candidate.predictedPrice,
-          edge: candidate.edge
-        })),
-        {},
-        fetchImpl
-      );
-
-      for (const reason of response.reasons) {
-        const target = items.find((candidate) => candidate.marketId === reason.marketId);
-        if (!target) continue;
-        target.reasonRu = reason.reasonRu;
-        target.reasonEn = reason.reasonEn;
-        updated.add(target);
-      }
-    } catch (error) {
-      const message = (error as Error).message;
-      if (error instanceof DeepSeekFatalError) {
-        stopped = true;
-        console.error('[analysis] ABORT enrichment (fatal): %s', message.slice(0, 200));
-        throw error;
-      }
-      if (items.length === 1) {
-        console.warn('[analysis] long analysis failed, keeping brief text: %s', message);
-        return;
-      }
-      console.warn(
-        '[analysis] reason chunk of %d failed (%s) — splitting',
-        items.length,
-        message.slice(0, 120)
-      );
-      const half = Math.ceil(items.length / 2);
-      await enrichChunk(items.slice(0, half));
-      await enrichChunk(items.slice(half));
-    }
-  };
-
-  await mapPool(chunk(candidates, 2), concurrency, enrichChunk);
-
-  return updated.size;
-}
-
-/**
- * Backfill: regenerates full-length analyses for signals that still hold the
- * brief phase-1 text (e.g. rows stored before phase 2 existed).
- * `minChars` is the length below which a text is considered "brief".
- */
-export async function enrichStoredSignals(
-  minChars = 600,
-  fetchImpl: typeof fetch = fetch,
-  concurrency = 1
-): Promise<{checked: number; updated: number}> {
-  const rows = listSignalsNeedingReason(minChars);
-  if (rows.length === 0) return {checked: 0, updated: 0};
-
-  const candidates: SignalCandidate[] = rows.map((row) => ({
-    eventId: row.event_id,
-    eventSlug: row.event_slug,
-    marketId: row.market_id,
-    title: row.title,
-    question: row.question,
-    outcome: row.outcome,
-    marketPrice: row.market_price,
-    predictedPrice: row.predicted_price,
-    edge: row.edge,
-    recommendation: (row.recommendation as 'BUY' | 'NO_ACTION') ?? 'BUY',
-    reasonRu: row.reason_ru,
-    reasonEn: row.reason_en,
-    volume: row.volume ?? 0,
-    liquidity: row.liquidity ?? 0,
-    category: row.category ?? undefined,
-    tags: [],
-    url: row.polymarket_url ?? ''
-  }));
-
-  await enrichReasons(candidates, fetchImpl, concurrency);
-
-  let written = 0;
-  for (let i = 0; i < candidates.length; i++) {
-    const candidate = candidates[i];
-    if (candidate.reasonRu === rows[i].reason_ru && candidate.reasonEn === rows[i].reason_en) {
-      continue;
-    }
-    updateReasons(rows[i].id, candidate.reasonRu, candidate.reasonEn);
-    written++;
-  }
-
-  return {checked: candidates.length, updated: written};
-}
-
-export interface RunAnalysisResult {
-  fetched: number;
-  eligible: number;
-  analysed: number;
-  stored: number;
-  storedSignals: SignalCandidate[];
-  errors: string[];
-}
-
-/**
  * Analyses a batch of events. If the model reply is unusable (usually a
  * truncated response), the batch is split in half and retried down to
  * single-event granularity instead of dropping the whole batch.
@@ -418,99 +280,4 @@ export function evaluateResponses(
   }
 }
 
-/**
- * Runs one full analysis cycle:
- * upcoming events -> filters -> DeepSeek batches -> top-N signals -> database.
- */
-export async function runAnalysis(): Promise<RunAnalysisResult> {
-  const errors: string[] = [];
 
-  const events = await fetchUpcomingEvents({
-    limit: config.eventsLimit,
-    maxDaysAhead: config.maxDaysAhead
-  });
-  const eligible = events
-    .filter((event) =>
-      passesFilters(event, {
-        minLiquidity: config.minLiquidity,
-        minMarketPrice: config.minMarketPrice,
-        minDurationHours: config.minEventDurationHours,
-        excludedTags: config.excludedTags
-      })
-    )
-    .slice(0, config.analyzeLimit)
-    .map((event) => trimMarkets(event, config.maxMarketsPerEvent));
-
-  const state = {
-    candidates: [] as SignalCandidate[],
-    observedEdges: [] as number[],
-    analysed: 0
-  };
-
-  for (let i = 0; i < eligible.length; i += config.analyzeBatchSize) {
-    const batch = eligible.slice(i, i + config.analyzeBatchSize);
-    try {
-      const responses = await analyzeEventsBatch(batch);
-      evaluateResponses(batch, responses, state);
-      markAnalyzed(batch.map((event) => event.id));
-    } catch (error) {
-      if (error instanceof DeepSeekFatalError) {
-        const message = `fatal: ${(error as Error).message}`;
-        errors.push(message);
-        console.error('[analysis] ABORT: %s', (error as Error).message.slice(0, 200));
-        break;
-      }
-      const message = `batch ${i / config.analyzeBatchSize + 1}: ${(error as Error).message}`;
-      errors.push(message);
-      console.error('[analysis] %s', message);
-    }
-  }
-
-  const candidates = state.candidates;
-  const observedEdges = state.observedEdges;
-  const analysed = state.analysed;
-
-  observedEdges.sort((a, b) => b - a);
-  console.log(
-    '[analysis] edges observed=%d top=%s (threshold=%s)',
-    observedEdges.length,
-    observedEdges
-      .slice(0, 5)
-      .map((e) => e.toFixed(3))
-      .join(', ') || 'none',
-    config.minEdge
-  );
-
-  // Strongest edges first, but keep the catalog diverse (groups/categories).
-  const top = selectDiverse(candidates, {
-    limit: config.targetSignals,
-    maxPerGroup: config.maxPerGroup,
-    maxPerCategory: config.maxPerCategory
-  });
-
-  // Phase 2: full-length published analyses for the selected signals only.
-  let enriched = 0;
-  try {
-    enriched = await enrichReasons(top);
-  } catch (error) {
-    if (error instanceof DeepSeekFatalError) {
-      errors.push(`fatal: ${(error as Error).message}`);
-      console.error('[analysis] ABORT enrichment: %s', (error as Error).message.slice(0, 200));
-    } else {
-      throw error;
-    }
-  }
-  console.log('[analysis] selected=%d enriched=%d', top.length, enriched);
-
-  let stored = 0;
-  for (const candidate of top) {
-    try {
-      upsertSignal(candidate);
-      stored++;
-    } catch (error) {
-      errors.push(`store ${candidate.marketId}: ${(error as Error).message}`);
-    }
-  }
-
-  return {fetched: events.length, eligible: eligible.length, analysed, stored, storedSignals: top, errors};
-}
