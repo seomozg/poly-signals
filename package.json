@@ -1,8 +1,16 @@
 {
   "name": "poly-site",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
-  "description": "Catalog of AI-analyzed Polymarket signals (ru/en)",
+  "description": "PolySignals — bilingual catalog of AI-analyzed Polymarket signals (Next.js 16 + DeepSeek pipeline + cron worker)",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/seomozg/poly-signals.git"
+  },
   "scripts": {
     "dev": "next dev",
     "build": "next build",
