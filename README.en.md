@@ -69,11 +69,11 @@ FROM ai_calls GROUP BY day, phase ORDER BY day;
 
 ## Deployment
 
-Docker: `docker-compose up -d --build` (web on `127.0.0.1:${WEB_PORT:-3010}`, worker + shared
-`./data` volume). The production setup (Ubuntu 24.04 VPS behind nginx with webroot SSL) is
-described in the [Russian README](./README.md#деплой-docker), including host-specific gotchas
-(broken systemd nginx unit, `docker-compose` standalone, webroot certificates) and the
-regression check for co-hosted sites: `node deploy/check-sites.mjs`.
+Production runs behind nginx with Let's Encrypt certificates issued in webroot mode;
+the app itself is two Docker containers (web + worker) with a shared `./data` volume —
+see the [Deployment section of the Russian README](./README.md#деплой-docker) and the vhost
+template in `deploy/nginx/`. The regression check for co-hosted sites is
+`node deploy/check-sites.mjs <ip>`.
 
 ## License
 

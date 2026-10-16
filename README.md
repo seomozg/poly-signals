@@ -219,45 +219,22 @@ docker compose up -d --build
 
 Или без Docker: `npm run build` + процесс `npm start` и `npm run worker` под PM2/systemd.
 
-### Продакшен: poly-signals.ru (Ubuntu 24.04, VPS)
+### Продакшен
 
-Конфиги в `deploy/`; приложение живёт в `/opt/poly-signals`, контейнеры
-`poly-signals-web-1` (127.0.0.1:3010) и `poly-signals-worker-1`, за nginx.
+Рекомендуемая схема (как на poly-signals.ru):
 
-**Особенности хостинга, которые нельзя игнорировать:**
+1. Приложение и воркер идут в Docker: `docker-compose up -d --build`
+   (`web` слушает только loopback `127.0.0.1:${WEB_PORT:-3010}`, `worker` исполняет cron).
+2. Перед nginx — reverse proxy с HTTPS; сертификаты удобно выпускать в режиме webroot
+   (`certbot certonly --webroot -w <webroot> -d <domain>`), ACME-челлендж обслуживает nginx.
+3. `SITE_URL` передаётся в сборку (build arg) — иначе в пререндеренном HTML останется localhost;
+   `sitemap.ts` намеренно `force-dynamic`, т.к. на этапе сборки образа нет тома с БД.
 
-1. **systemd-юнит nginx в состоянии `failed`** (мастер запущен вручную, PID см.
-   `ps -eo pid,args | grep 'nginx: master'` — нужен тот, что с `-c /etc/nginx/nginx.conf`).
-   Запрещено `systemctl restart/reload nginx` — он уронит все сайты. Правильно:
-   ```bash
-   nginx -t && kill -HUP <pid_мастера>
-   ```
-2. **Плагина `docker compose` нет** — только standalone `docker-compose`.
-3. **Сертификаты — только webroot**: `certbot --nginx` пытается перезапустить nginx
-   и падает. Рабочая схема: ACME-локация в вирталке (уже есть) + корень
-   `/var/www/letsencrypt-webroot`:
-   ```bash
-   certbot certonly --webroot -w /var/www/letsencrypt-webroot \
-     -d poly-signals.ru -d www.poly-signals.ru --non-interactive --agree-tos
-   ```
-4. **`SITE_URL` передаётся в сборку** (build arg) — без него в пререндеренном HTML
-   останется localhost; `sitemap.ts` намеренно `force-dynamic`, т.к. на этапе
-   сборки образа нет тома с БД.
+Шаблон виртуалки nginx — `deploy/nginx/poly-signals.ru.conf`.
 
-Обновление:
-
-```bash
-# локально: упаковать исходники (без node_modules/.next/.git/data)
-tar -czf poly-site.tar.gz --exclude=./node_modules --exclude=./.next \
-  --exclude=./.git --exclude=./data --exclude='./*.log' .
-scp -i <key> poly-site.tar.gz root@85.198.67.207:/root/
-ssh -i <key> root@85.198.67.207 "tar -xzf /root/poly-site.tar.gz -C /opt/poly-signals \
-  && cd /opt/poly-signals && docker-compose build && docker-compose up -d"
-```
-
-Проверки после деплоя: `curl -s https://poly-signals.ru/api/health`,
-`docker-compose ps`, `docker logs poly-signals-worker-1`, `nginx -t`,
-и пройтись по чужим доменам (см. `deploy/check-sites.mjs`).
+Чек-лист после деплоя: `curl -s https://<domain>/api/health` (ok + число сигналов),
+`docker-compose ps`, `docker logs poly-signals-worker-1`, `nginx -t`, и регрессия по соседним
+сайтам на том же хосте — `node deploy/check-sites.mjs <ip>`.
 
 ## Данные и SEO-заметки
 

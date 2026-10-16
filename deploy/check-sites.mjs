@@ -2,14 +2,18 @@
  * Post-deploy smoke check: verifies that every site on the host still answers
  * the same way it did before a change (run before/after and compare).
  *
- *   node deploy/check-sites.mjs [ip]     # default:85.198.67.207
+ *   node deploy/check-sites.mjs <ip>     # IP of the host the sites are served from
  *
  * HTTP is tested with an explicit Host header and HTTPS with --resolve, so the
  * check works regardless of public DNS and exercises nginx virtual hosting.
  */
 import {execFileSync} from 'node:child_process';
 
-const ip = process.argv[2] ?? '85.198.67.207';
+const ip = process.argv[2];
+if (!ip) {
+  console.error('usage: node deploy/check-sites.mjs <ip>');
+  process.exit(1);
+}
 
 const sites = [
   'test-domain.ru',

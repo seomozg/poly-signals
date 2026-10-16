@@ -44,3 +44,5 @@ yarn-error.log*
 .tmp-*.mjs
 .tmp-*.cjs
 *.tar.gz
+# private hosting runbook (server IPs, host quirks) — never publish
+deploy/HOSTING-RUNBOOK.md
