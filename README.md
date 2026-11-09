@@ -230,7 +230,8 @@ docker compose up -d --build
 3. `SITE_URL` передаётся в сборку (build arg) — иначе в пререндеренном HTML останется localhost;
    `sitemap.ts` намеренно `force-dynamic`, т.к. на этапе сборки образа нет тома с БД.
 
-Шаблон виртуалки nginx — `deploy/nginx/poly-signals.ru.conf`.
+Шаблон виртуалки nginx — `deploy/nginx/poly-signals.conf` (фаза 1: ACME-webroot + redirect)
+и `deploy/nginx/poly-signals.ssl.conf` (фаза 2: 443 с прокси на web-контейнер).
 
 Чек-лист после деплоя: `curl -s https://<domain>/api/health` (ok + число сигналов),
 `docker-compose ps`, `docker logs poly-signals-worker-1`, `nginx -t`, и регрессия по соседним
